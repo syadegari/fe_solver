@@ -1,0 +1,2061 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,bm,mathtools}
+\usepackage{bbm}
+\usepackage{geometry}
+\usepackage{booktabs,longtable,array}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+
+\geometry{left=2.2cm,right=2.2cm,top=2.2cm,bottom=2.4cm}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\hfuzz=40pt
+\setlist[itemize]{itemsep=0.25em,topsep=0.35em}
+\setlist[enumerate]{itemsep=0.25em,topsep=0.35em}
+
+\newcommand{\bs}[1]{\boldsymbol{#1}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\sym}{\operatorname{sym}}
+\newcommand{\skw}{\operatorname{skw}}
+\newcommand{\Grad}{\operatorname{Grad}}
+\newcommand{\Div}{\operatorname{Div}}
+\newcommand{\dev}{\operatorname{dev}}
+\newcommand{\I}{\bs{I}}
+\newcommand{\F}{\bs{F}}
+\newcommand{\Fe}{\bs{F}_{\mathrm e}}
+\newcommand{\Fp}{\bs{F}_{\mathrm p}}
+\newcommand{\Pstress}{\bs{P}}
+\newcommand{\sig}{\bs{\sigma}}
+\newcommand{\tauK}{\bs{\tau}}
+\newcommand{\Lten}{\bs{L}}
+\newcommand{\dten}{\bs{d}}
+\newcommand{\wten}{\bs{w}}
+\newcommand{\Aalg}{\mathbb{A}^{\mathrm{alg}}}
+\newcommand{\Fb}{\overline{\bs{F}}}
+\newcommand{\Pb}{\overline{\bs{P}}}
+\newcommand{\Ab}{\overline{\mathbb{A}}^{\mathrm{alg}}}
+\newcommand{\sigb}{\overline{\bs{\sigma}}}
+\newcommand{\Peff}{\bs{P}^{\mathrm{eff}}}
+\newcommand{\cT}{\mathbbm{c}^{\mathrm{T}}}
+\newcommand{\calgT}{\mathbbm{c}^{\mathrm{T,alg}}}
+\newcommand{\cbaralgT}{\overline{\mathbbm{c}}^{\mathrm{T,alg}}}
+\newcommand{\vct}[1]{\mathbf{#1}}
+
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.3pt,
+  xleftmargin=0.3em,
+  xrightmargin=0.3em,
+  aboveskip=0.6em,
+  belowskip=0.6em
+}
+
+\newtcolorbox{algorithmbox}[1]{
+  breakable,
+  colback=black!2,
+  colframe=black!55,
+  boxrule=0.6pt,
+  arc=1mm,
+  left=1.5mm,right=1.5mm,top=1.2mm,bottom=1.2mm,
+  title=#1,
+  fonttitle=\bfseries
+}
+
+\title{Finite-Strain Hexahedral Finite Elements\\
+Truesdell Tangent Representation, Centroidal $\bar F$ Hex8,\\
+and Sparse Linear Displacement Constraints -- Formulation Reference}
+\author{Continuum formulation, variational formulation, finite element formulation, and solution method}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+\begingroup\sloppy\hfuzz=40pt
+\tableofcontents
+\endgroup
+\newpage
+
+\section{Notation conventions and nomenclature}
+\label{sec:nomenclature}
+
+Continuum-mechanics notation and discrete linear-algebra notation are deliberately separated. This convention is used throughout the document.
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}p{5.0cm}>{\raggedright\arraybackslash}p{5.0cm}}
+\toprule
+Notation & Meaning & Typical examples \\
+\midrule
+$J,t,\Delta t$ & scalar & determinant $J$, pseudo-time $t$, increment size $\Delta t$ \\
+$\bs X,\bs u,\bs F,\bs P,\bs\sigma$ & continuum vector or second-order tensor & position/displacement fields, deformation gradient, stress \\
+$\mathbb A,\mathbbm c$ & fourth-order tensor & material and spatial algorithmic tangents \\
+$A_{iIjJ},c_{ijkl}$ & components of fourth-order tensors & index form of the preceding tangents \\
+$\vct u,\vct f,\vct r$ & finite-dimensional algebraic vectors & nodal displacement, force, residual \\
+$\vct K,\vct B,\vct D,\vct C$ & finite-dimensional matrices & stiffness, strain--displacement matrix, Voigt constitutive matrix, constraint matrix \\
+$A,B$ & finite-element node labels & node $A$ or $B$ in one element \\
+$({\cdot})^\top$ & transpose operation & distinguished from the upright superscript $\mathrm T$, which labels the Truesdell rate/tangent representation \\
+$\mathrm{alg},\mathrm{int},\mathrm{ext},\mathrm V,\mathrm e,\mathrm p$ & descriptive labels rather than tensor-component indices & algorithmic, internal, external, Voigt, elastic, and plastic labels \\
+$g,c$ & integration/projection-point labels & Gauss point $g$, element centroid $c$ \\
+$i,j,k,l$ & spatial component indices & $1,2,3$ \\
+$I,J,K,L$ & reference/material component indices & $1,2,3$ \\
+$n,n+1$ & committed increment endpoints & accepted states at pseudo-times $t_n,t_{n+1}$ \\
+$(i)$ & global Newton iteration & current trial state at $t_{n+1}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Important symbols are summarized below. Symbols are also defined at first substantive use.
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{10.8cm}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$\Omega_0$ & stress-free reference configuration \\
+$\Omega_t$ & generic current configuration at pseudo-time/load parameter $t$ \\
+$\Omega_n$, $\Omega_{n+1}^{(i)}$ & committed and current Newton-trial configurations \\
+$\bs X,\bs x,\bs u$ & material position, spatial position, displacement field \\
+$\bs\varphi$ & motion map, $\bs x=\bs\varphi(\bs X,t)$ \\
+$\bs\xi$ & parent-element coordinate vector $(\xi,\eta,\zeta)^\top$ \\
+$\bs F$, $J$ & deformation gradient and $J=\det\bs F$ \\
+$\bs L$ & spatial velocity gradient, $\bs L=\dot{\bs F}\bs F^{-1}$ \\
+$\bs d$, $\bs w$ & symmetric rate-of-deformation tensor and skew spin, $\bs L=\bs d+\bs w$ \\
+$\bs\sigma$, $\bs\tau$, $\bs P$ & Cauchy, Kirchhoff, and first Piola--Kirchhoff stress \\
+$\overset{\mathrm T}{\bs\sigma}$ & Truesdell objective rate of Cauchy stress \\
+$\mathcal H$ & committed constitutive history/state variables owned by the material model \\
+$\widehat{\mathcal H}_{n+1}^{(i)}$ & provisional material state returned for Newton trial $i$ at the target $t_{n+1}$; it is not committed until global convergence \\
+$\widehat{\bs P}$ & endpoint first Piola--Kirchhoff stress returned by the complete discrete material update; its arguments are defined in Eq.~\eqref{eq:Phat-map} \\
+$\mathbb A^{\mathrm{alg}}$ & algorithmic material tangent $D\bs P_{n+1}/D\bs F_{n+1}$ of the complete discrete update, with committed data fixed \\
+$\mathbbm c^{\mathrm{T,alg}}$ & spatial algorithmic tangent in the Truesdell representation \\
+$\mathbbm a^{\mathrm{pf}}$ & direct push-forward of $\mathbb A^{\mathrm{alg}}$ before subtracting stress-dependent terms required by the Truesdell representation \\
+$\bs h$ & spatial perturbation gradient $\delta\bs F\,\bs F^{-1}=\nabla_x\Delta\bs u$ in the Newton linearization \\
+$\bs G_v$ & spatial gradient $\nabla_x\bs v$ of the virtual-displacement/test field during weak-form linearization \\
+$\bs d_h$ & symmetric part $\operatorname{sym}\bs h$ of the Newton perturbation gradient; it is not a separately integrated physical rate \\
+$\bs v$ & admissible continuum virtual displacement/test field \\
+$\vct v$ & nodal coefficient vector representing $\bs v^h$ after FE interpolation \\
+$\Delta\bs u$ & continuum Newton search direction/perturbation used to linearize equilibrium \\
+$\Delta\vct u$ & nodal coefficient vector of the Newton correction \\
+$\vct s$, $\vct d_{\mathrm V}$, $\vct D$ & Voigt stress vector, engineering-shear representation of a symmetric spatial tensor, and corresponding $6\times6$ tangent matrix \\
+$\vct f^{\mathrm{int}},\vct f^{\mathrm{ext}}$ & discrete internal and external force vectors \\
+$\bs b_0$ & prescribed dead body force per reference volume, when present \\
+$\vct K$ & discrete consistent tangent/Jacobian \\
+$G,G^{\mathrm{int}},G^{\mathrm{ext}}$ & weak residual and its internal/external virtual-work contributions \\
+$\vct C\vct u=\vct d$ & general affine linear displacement constraints \\
+$\vct\lambda$ & Lagrange multipliers associated with the constraint equations \\
+$\omega_g^x$ & current quadrature-volume weight $\det(\vct J_{x,g})W_g$ at Gauss point $g$ \\
+$N_A, W_g$ & shape function associated with node $A$ and parent-space Gauss weight at point $g$ \\
+$\vct J_0,\vct J_x$ & reference and current parent-to-physical Jacobian matrices; in element evaluation $\vct J_x$ is formed on the current Newton-trial configuration unless stated otherwise \\
+$D_Q(\cdot),\,\delta(\cdot)$ & total/directional derivative with respect to the indicated argument $Q$, and the corresponding variation; committed quantities named after the semicolon in a discrete material map are held fixed \\
+$\vct R(\vct u)$ & unconstrained finite-dimensional mechanical residual function $\vct f^{\mathrm{int}}(\vct u)-\vct f^{\mathrm{ext}}$ \\
+$\vct r_u,\vct r_c$ & displacement-equilibrium and constraint residual vectors in one KKT/Newton iteration \\
+$\vct Z,\vct K_{\mathrm{red}}$ & basis of $\ker\vct C$ and reduced constrained tangent $\vct Z^\top\vct K\vct Z$ used in the local solvability discussion \\
+$\alpha_g,q_g$ & scalar volumetric-projection factor and its directional logarithmic variation for centroidal $\bar F$ Hex8 \\
+$\bar{\bs F}$ & centroidally projected deformation gradient used only by Hex8-$\bar F$ \\
+$\Fe,\Fp$ & elastic and plastic deformation-gradient factors in a multiplicative finite-strain inelastic decomposition, when that constitutive model is used \\
+\bottomrule
+\end{longtable}
+
+\section{Purpose, scope, and organization}
+\label{sec:purpose}
+
+This document is the mathematical formulation reference for a finite-strain, quasi-static finite element solver. It develops the continuum kinematics, Truesdell tangent representation, current-configuration weak form and consistent linearization, standard Hex8 and Hex20 elements, centroidal $\bar F$ Hex8, and the sparse Lagrange-multiplier treatment of general linear displacement constraints. A separate implementation specification translates the final equations and algorithms into software contracts and executable requirements.
+
+The mathematical path is deliberately singular: Cauchy stress is used in the current configuration, the Truesdell rate represents the spatial algorithmic tangent, and the constitutive model is exposed to the element through a discrete finite-deformation update based on $\bs F_n$ and $\bs F_{n+1}^{(i)}$. Derivations and explanatory material belong here; code-level array layouts, file formats, and acceptance decks belong in the implementation specification.
+
+\subsection{Normative formulation choices}
+
+\begin{itemize}
+  \item The notation follows Belytschko, Liu, Moran, and Elkhodary, \emph{Nonlinear Finite Elements for Continua and Structures}, second edition, where practical.
+  \item Equilibrium is written in the current configuration and discretized in updated-Lagrangian form. $\Omega_0$ remains available for total deformation gradients.
+  \item The problem is quasi-static and permits arbitrary finite strain and rotation. Displacement is the only primary FE field.
+  \item The supported solid elements are standard Hex8, centroidal $\bar F$ Hex8, and standard Hex20 serendipity. Hex8 uses $2^3$ full integration; Hex20 uses $3^3$ full integration. The $\bar F$ centroid is a projection point, not a constitutive integration point.
+  \item The constitutive tangent is $D\bs P_{n+1}/D\bs F_{n+1}$ for the complete discrete material update. The element formulation owns push-forward, geometric, and $\bar F$ projection terms.
+  \item General affine displacement constraints are imposed with Lagrange multipliers through a sparse KKT system; no dependent displacement DOF elimination is assumed.
+  \item Deformation gradients are derived kinematic quantities reconstructed from nodal positions/displacements. They are not independently advanced Gauss-point state variables.
+\end{itemize}
+
+\part{Continuum formulation}
+\section{Configurations, motion, and notation}
+
+Let $\Omega_0$ denote the stress-free reference configuration, with material coordinates $\bs{X}$. At pseudo-time $t$ the motion is
+\begin{equation}
+\bs{x}=\bs{\varphi}(\bs{X},t),
+\qquad
+\bs{u}(\bs{X},t)=\bs{x}-\bs{X}.
+\end{equation}
+The deformation gradient and its Jacobian are
+\begin{equation}
+\F=\frac{\partial\bs{x}}{\partial\bs{X}}
+=\I+\frac{\partial\bs{u}}{\partial\bs{X}},
+\qquad
+J=\det\F>0.
+\end{equation}
+Let $\bs v_{\mathrm{vel}}=\dot{\bs x}$ denote the derivative of the motion with respect to $t$. When $t$ is physical time this is the spatial velocity; for a rate-independent pseudo-time parametrization it is a path derivative used to express the same kinematic rate identities. The velocity gradient is
+\begin{equation}
+\Lten=\dot{\F}\F^{-1},
+\end{equation}
+with symmetric and skew parts
+\begin{equation}
+\dten=\frac{1}{2}(\Lten+\Lten^\top),
+\qquad
+\wten=\frac{1}{2}(\Lten-\Lten^\top),
+\qquad
+\Lten=\dten+\wten.
+\end{equation}
+True physical time is not required by the quasi-static equilibrium equations. The parameter $t$ may therefore be a monotonically increasing pseudo-time or load parameter for a rate-independent material. If a constitutive model is genuinely rate dependent, $t$ must instead be assigned its physical-time meaning and the physical $\Delta t$ must be supplied to the local update.
+
+\subsection{Increment and Newton-iteration notation}
+
+The state at $t_n$ is converged and committed. The next pseudo-time is
+\begin{equation}
+t_{n+1}=t_n+\Delta t.
+\end{equation}
+Within increment $n\rightarrow n+1$, superscript $(i)$ denotes a global Newton trial:
+\begin{equation}
+\bs{u}_{n+1}^{(i)},\quad
+\F_{n+1}^{(i)},\quad
+\sig_{n+1}^{(i)},\quad
+\widehat{\mathcal H}_{n+1}^{(i)}.
+\end{equation}
+Every local constitutive evaluation at iteration $i$ starts from the same committed data
+\begin{equation}
+\left\{\F_n,\mathcal H_n\right\}
+\end{equation}
+and integrates to the current trial endpoint $\F_{n+1}^{(i)}$.
+
+\section{Stress measures and the Truesdell rate}
+
+The Cauchy stress is $\sig$. The Kirchhoff and first Piola-Kirchhoff stresses are
+\begin{equation}
+\tauK=J\sig,
+\qquad
+\Pstress=J\sig\F^{-\top}.
+\label{eq:stress-transform}
+\end{equation}
+Balance of angular momentum implies $\sig=\sig^\top$ for the non-polar continua considered here.
+
+\subsection{Truesdell rate}
+
+The Truesdell rate of Cauchy stress is
+\begin{equation}
+\overset{\mathrm{T}}{\sig}
+=
+\dot{\sig}
+-\Lten\sig
+-\sig\Lten^\top
++\tr(\Lten)\sig.
+\label{eq:truesdell}
+\end{equation}
+Since $\tauK=J\sig$ and $\dot J=J\tr(\Lten)$,
+\begin{equation}
+\mathcal{L}_{\bs v_{\mathrm{vel}}}\tauK
+=
+\dot{\tauK}-\Lten\tauK-\tauK\Lten^\top
+=
+J\overset{\mathrm{T}}{\sig}.
+\end{equation}
+Thus the Truesdell rate of Cauchy stress is the Lie derivative of Kirchhoff stress divided by $J$.
+
+A spatial constitutive relation written using this rate has the form
+\begin{equation}
+\overset{\mathrm{T}}{\sig}
+=\cT:\dten.
+\label{eq:truesdell-constitutive}
+\end{equation}
+For an incrementally integrated material, the corresponding $\calgT$ used in the finite element tangent is understood as an \emph{algorithmic spatial tangent}, not necessarily the instantaneous continuum modulus.
+
+\section{The discrete material map and the hierarchy of tangents}
+
+The local material update is considered as a discrete algorithm
+\begin{equation}
+\mathcal{M}:
+\left(
+\F_n,\F_{n+1}^{(i)},\mathcal H_n,t_n,t_{n+1}
+\right)
+\longrightarrow
+\left(
+\Pstress_{n+1}^{(i)},
+\mathbb A_{n+1}^{\mathrm{alg},(i)},
+\widehat{\mathcal H}_{n+1}^{(i)}
+\right).
+\label{eq:material-map}
+\end{equation}
+Write the stress component of this discrete update as
+\begin{equation}
+\Pstress_{n+1}
+=
+\widehat{\Pstress}
+\left(
+\F_{n+1};\F_n,\mathcal H_n,\Delta t
+\right).
+\label{eq:Phat-map}
+\end{equation}
+The hat does not denote a new stress measure. It denotes the algorithmically returned endpoint stress after the complete local integration from the committed state $(\F_n,\mathcal H_n)$ to the specified endpoint $\F_{n+1}$. With the committed arguments held fixed,
+\begin{equation}
+\boxed{
+\Aalg_{n+1}
+=
+D_{\F_{n+1}}
+\widehat{\Pstress}
+\left(
+\F_{n+1};\F_n,\mathcal H_n,\Delta t
+\right)
+}
+\label{eq:Aalg-def}
+\end{equation}
+is the derivative of the complete discrete update. It contains the response of all locally integrated internal variables.
+
+Three distinct tangents should not be conflated:
+\begin{align}
+\mathbb{A}^{\mathrm{frozen}}
+&=
+\left.
+\frac{\partial\Pstress}{\partial\F}
+\right|_{\mathcal H},
+\label{eq:frozen-tangent}
+\\
+\Aalg
+&=
+\frac{D\Pstress_{n+1}}{D\F_{n+1}},
+\label{eq:alg-tangent-repeated}
+\\
+\vct{K}_e
+&=
+\frac{\partial\vct f^{e,\mathrm{int}}}
+{\partial\vct{u}_e}.
+\label{eq:element-tangent-hierarchy}
+\end{align}
+The first is a frozen-state material derivative, the second is a local algorithmic material tangent, and the third is the element contribution to the global Newton Jacobian. The finite element linearization maps the second into the third and adds the geometric contribution.
+
+\section{Push-forward of the material tangent to a spatial Truesdell tangent}
+\label{sec:pushforward}
+
+The relation
+\begin{equation}
+\Pstress=J\sig\F^{-\top}
+\end{equation}
+provides the bridge between the neutral material tangent and the spatial tangent required by the current-configuration weak form.
+
+Let an infinitesimal perturbation of the endpoint configuration be $\delta\F$ and define the spatial perturbation gradient
+\begin{equation}
+\bs{h}=\delta\F\F^{-1},
+\qquad
+\delta\F=\bs{h}\F.
+\label{eq:h-def}
+\end{equation}
+The variation of Eq.~\eqref{eq:stress-transform} is
+\begin{equation}
+\delta\Pstress
+=
+J\left[
+\delta\sig
++\tr(\bs{h})\sig
+-\sig\bs{h}^\top
+\right]\F^{-\top}.
+\label{eq:variation-P}
+\end{equation}
+Multiplying by $\F^\top/J$ gives
+\begin{equation}
+\frac{1}{J}\delta\Pstress\F^\top
+=
+\delta\sig
++\tr(\bs{h})\sig
+-\sig\bs{h}^\top.
+\end{equation}
+Define the Truesdell-type endpoint variation
+\begin{equation}
+\delta^{\mathrm{T}}\sig
+=
+\delta\sig
+-\bs{h}\sig
+-\sig\bs{h}^\top
++\tr(\bs{h})\sig.
+\end{equation}
+Then
+\begin{equation}
+\boxed{
+\delta^{\mathrm{T}}\sig
+=
+\frac{1}{J}\delta\Pstress\F^\top
+-\bs{h}\sig
+}.
+\label{eq:Tvariation-from-P}
+\end{equation}
+Using $\delta\Pstress=\Aalg:\delta\F$ and Eq.~\eqref{eq:h-def}, introduce the fourth-order push-forward tensor $\mathbbm a^{\mathrm{pf}}$ through its components
+\begin{equation}
+\boxed{
+a^{\mathrm{pf}}_{ij\,km}
+=
+\frac{1}{J}
+A^{\mathrm{alg}}_{iI\,kK}
+F_{jI}F_{mK}
+}
+\label{eq:a-pushforward}
+\end{equation}
+Equation~\eqref{eq:Tvariation-from-P} becomes
+\begin{equation}
+\delta^{\mathrm{T}}\sigma_{ij}
+=
+\left(
+a^{\mathrm{pf}}_{ij\,km}
+-\delta_{ik}\sigma_{mj}
+\right)h_{km}.
+\label{eq:Tvariation-components}
+\end{equation}
+For an objective material algorithm, the constitutive part depends on the symmetric perturbation
+\begin{equation}
+\bs{d}_h=\sym\bs{h}.
+\end{equation}
+A convenient minor-symmetric spatial algorithmic tangent is therefore
+\begin{equation}
+\boxed{
+ c^{\mathrm{T,alg}}_{ij\,km}
+=
+\frac{1}{2}
+\left[
+a^{\mathrm{pf}}_{ij\,km}
++a^{\mathrm{pf}}_{ij\,mk}
+-\delta_{ik}\sigma_{mj}
+-\delta_{im}\sigma_{kj}
+\right]
+}
+\label{eq:cT-from-A}
+\end{equation}
+so that
+\begin{equation}
+\delta^{\mathrm{T}}\sig
+=\calgT:\bs{d}_h.
+\end{equation}
+For an exact objective constitutive update, the appropriate output symmetries follow analytically. In a numerical implementation, loss of expected symmetries is a useful diagnostic and should not automatically be hidden by symmetrization unless the intended mathematical symmetry has first been established.
+
+\part{Variational formulation}
+\section{How variations are used in this document}
+\label{sec:variation-primer}
+
+Two independent directions appear in the variational formulation and should not be conflated. The field $\bs v$ is an admissible virtual displacement used to test equilibrium. The field $\Delta\bs u$ is the Newton search direction used to linearize the nonlinear residual about the current trial configuration. During the Newton linearization, the nodal coefficients of $\bs v$ are held fixed.
+
+A variation acts only on quantities that depend on the perturbed unknown. For a product $A(\bs u)B(\bs u)$,
+\begin{equation}
+\delta(AB)=(\delta A)B+A(\delta B),
+\end{equation}
+but if $B$ is independent of $\bs u$, then $\delta B=0$ and only the first term remains. The apparent asymmetry that often occurs in nonlinear finite-element derivations therefore reflects dependency, not a suspension of the product rule.
+
+Updated-Lagrangian expressions contain an important example. The test-function coefficients are fixed, but its spatial gradient depends on the current coordinate map. Consequently
+\begin{equation}
+\delta\bs v=\bs0
+\quad\text{in coefficient space, while}\quad
+\delta(\nabla_x\bs v)\neq\bs0.
+\end{equation}
+In contrast, $\Grad_X\bs v$ is unchanged when the same test field is expressed with derivatives with respect to the fixed reference coordinates. Likewise, the current volume element $\dd v$ varies, whereas the reference volume element $\dd V$ does not.
+
+Appendix~\ref{app:variations} develops these rules in more detail and works through the variations used in the internal-force linearization, including $\delta J$, $\delta\F^{-\top}$, $\delta(\nabla_x\bs v)$, and the distinction between explicit and constitutively condensed dependencies.
+
+\section{Weak form in the current configuration}
+
+Let $\bs{v}$ denote an admissible virtual displacement. The quasi-static weak equilibrium statement in the current configuration $\Omega_t$ is
+\begin{equation}
+G(\bs{u},\bs{v})
+=G^{\mathrm{int}}(\bs{u},\bs{v})
+-G^{\mathrm{ext}}(\bs{v})
+=0,
+\label{eq:weak-total}
+\end{equation}
+where
+\begin{equation}
+G^{\mathrm{int}}
+=
+\int_{\Omega_t}
+\sig:\nabla_x\bs{v}\,\dd v
+=
+\int_{\Omega_t}
+\sig:\sym(\nabla_x\bs{v})\,\dd v
+\label{eq:weak-int}
+\end{equation}
+because $\sig$ is symmetric.
+
+After spatial discretization the continuum test field is represented by nodal coefficients,
+\begin{equation}
+\bs v^h(\bs X)=\sum_A N_A(\bs X)\vct v_A,
+\qquad
+\vct v=[\vct v_1^\top\;\cdots\;\vct v_N^\top]^\top.
+\label{eq:test-coefficients}
+\end{equation}
+Thus $\bs v$ denotes the continuum test field, while $\vct v$ denotes its finite-dimensional nodal coefficient vector.
+
+The present formulation admits dead external loading only. A convenient representation is a prescribed body force per reference volume $\bs b_0$ together with dead nodal forces,
+\begin{equation}
+G^{\mathrm{ext}}
+=
+\int_{\Omega_0}\bs b_0\cdot\bs v\,\dd V
++(\vct v)^\top\vct f^{\mathrm{ext}}_{\mathrm{nodal}}.
+\end{equation}
+These loads are independent of the current unknown configuration, so their tangent vanishes. Prescribed tractions per current area, pressure loads, and other follower loads are excluded because they would require an external-load linearization.
+
+\section{Consistent linearization of the internal weak form}
+\label{sec:linearization}
+
+Let $\Delta\bs{u}$ be a Newton correction and define its spatial gradient
+\begin{equation}
+\bs{h}=\nabla_x\Delta\bs{u},
+\qquad
+\bs{d}_h=\sym\bs{h}.
+\end{equation}
+The directional derivative of $G^{\mathrm{int}}$ is evaluated at the current Newton trial configuration $\Omega_{n+1}^{(i)}$; for readability the subscript is suppressed in the following local linearization.
+
+Define
+\begin{equation}
+\bs G_v=\nabla_x\bs v.
+\end{equation}
+Under an infinitesimal perturbation of that trial configuration,
+\begin{align}
+\delta(\dd v)&=\tr(\bs{h})\,\dd v,
+\label{eq:dv-var}
+\\
+\delta\bs G_v&=-\bs G_v\bs h.
+\label{eq:A-var}
+\end{align}
+Therefore
+\begin{align}
+DG^{\mathrm{int}}[\Delta\bs{u}]
+={}&
+\int_{\Omega_t}
+\left[
+\bs G_v:\delta\sig
+-\sig:(\bs G_v\bs h)
++\tr(\bs{h})\sig:\bs G_v
+\right]\dd v.
+\label{eq:DG-general}
+\end{align}
+
+\subsection{Truesdell representation}
+
+From the Truesdell constitutive variation,
+\begin{equation}
+\delta\sig
+=
+\calgT:\bs{d}_h
++\bs{h}\sig
++\sig\bs{h}^\top
+-\tr(\bs{h})\sig.
+\label{eq:dsig-T}
+\end{equation}
+Insert Eq.~\eqref{eq:dsig-T} into Eq.~\eqref{eq:DG-general}. The volume-change terms cancel. The term $\bs G_v:\sig\bs{h}^\top$ cancels $\sig:(\bs G_v\bs h)$. The remaining result is
+\begin{equation}
+\boxed{
+DG^{\mathrm{int}}[\Delta\bs{u}]
+=
+\int_{\Omega_t}
+\sym(\bs G_v):\calgT:\bs{d}_h\,\dd v
++
+\int_{\Omega_t}
+(G_v)_{ij}\,h_{ik}\,\sigma_{kj}\,\dd v
+}.
+\label{eq:DG-Truesdell}
+\end{equation}
+The first term gives the material tangent contribution. The second is the standard geometric or initial-stress contribution.
+
+This result is particularly useful because the geometric stiffness emerges from the linearization rather than being appended as an independent finite element technology.
+
+\part{Finite element formulation and element technology}
+\section{Finite element interpolation}
+
+For an element with $n_e$ nodes,
+\begin{equation}
+\bs{x}^h(\bs{\xi})
+=
+\sum_{A=1}^{n_e}N_A(\bs{\xi})\bs{x}_A,
+\qquad
+\bs{u}^h(\bs{\xi})
+=
+\sum_{A=1}^{n_e}N_A(\bs{\xi})\bs{u}_A,
+\label{eq:interpolation}
+\end{equation}
+where $\bs{\xi}=(\xi,\eta,\zeta)^\top\in[-1,1]^3$ are parent coordinates.
+
+The reference and current element maps are
+\begin{align}
+\bs{X}(\bs{\xi})
+&=\sum_A N_A(\bs{\xi})\bs{X}_A,
+\\
+\bs{x}(\bs{\xi})
+&=\sum_A N_A(\bs{\xi})\bs{x}_A.
+\end{align}
+Define the Jacobian matrices
+\begin{equation}
+\vct{J}_0
+=
+\frac{\partial\bs{X}}{\partial\bs{\xi}},
+\qquad
+\vct{J}_x
+=
+\frac{\partial\bs{x}}{\partial\bs{\xi}}.
+\label{eq:element-jacobians}
+\end{equation}
+With column-gradient convention,
+\begin{align}
+\nabla_X N_A&=\vct{J}_0^{-\top}\nabla_{\xi}N_A,
+\label{eq:grad-ref}
+\\
+\nabla_x N_A&=\vct{J}_x^{-\top}\nabla_{\xi}N_A.
+\label{eq:grad-current}
+\end{align}
+The total deformation gradient at a Gauss point follows either from nodal coordinates or from the two Jacobian maps:
+\begin{equation}
+\boxed{
+\F
+=
+\sum_A\bs{x}_A\otimes\nabla_XN_A
+=
+\vct{J}_x\vct{J}_0^{-1}
+}
+\label{eq:F-element}
+\end{equation}
+for the consistent matrix convention used here.
+
+Current volume integration is
+\begin{equation}
+\dd v=\det(\vct{J}_x)\,\dd\xi\,\dd\eta\,\dd\zeta.
+\end{equation}
+Reference and current Jacobians must remain orientation-consistent, and positive element Jacobians are required at all integration points.
+
+\section{Parent-element integration}
+
+For the standard Hex8 element and the centroidal $\bar F$ Hex8 element, use the two-point Gauss-Legendre rule in each parent coordinate,
+\begin{equation}
+\xi_g\in\left\{-\frac{1}{\sqrt{3}},+\frac{1}{\sqrt{3}}\right\},
+\qquad
+w_g=1,
+\end{equation}
+which gives eight integration points. The parent-space centroid
+\begin{equation}
+\bs{\xi}_c=(0,0,0)^\top
+\end{equation}
+is used by the $\bar F$ Hex8 element only for the volumetric projection; no constitutive integration or material history is stored there.
+
+For Hex20, use the three-point Gauss-Legendre rule in each parent coordinate:
+\begin{equation}
+\xi_g\in\left\{-\sqrt{\frac{3}{5}},0,+\sqrt{\frac{3}{5}}\right\},
+\qquad
+w_g\in\left\{\frac{5}{9},\frac{8}{9},\frac{5}{9}\right\},
+\end{equation}
+which gives 27 integration points.
+
+For any of these current-configuration integrals,
+\begin{equation}
+\int_{\Omega_e}q(\bs{x})\,\dd v
+\approx
+\sum_{g=1}^{n_g}
+q(\bs{\xi}_g)
+\det\vct{J}_x(\bs{\xi}_g)
+W_g,
+\qquad
+n_g=\begin{cases}8,&\text{Hex8},\\27,&\text{Hex20},\end{cases}
+\label{eq:quadrature}
+\end{equation}
+where $W_g=w_{g_1}w_{g_2}w_{g_3}$. Define the current quadrature-volume weight
+\begin{equation}
+\boxed{\omega_g^x=\det\vct J_{x,g}\,W_g.}
+\label{eq:omega-current}
+\end{equation}
+Consequently,
+\begin{align}
+\vct f^{e,\mathrm{int}}
+&\approx
+\sum_g
+\vct{B}_g^\top\vct{s}_g
+\omega_g^x,
+\label{eq:fint-quad}
+\\
+\vct{K}_{\mathrm{mat}}
+&\approx
+\sum_g
+\vct{B}_g^\top\vct{D}^{\mathrm{T,alg}}_g\vct{B}_g
+\omega_g^x,
+\label{eq:Kmat-quad}
+\\
+\vct{K}_{\mathrm{geo},AB}
+&\approx
+\sum_g
+\left[(\nabla_xN_A)_g^\top\sig_g(\nabla_xN_B)_g\right]
+\vct{I}_3
+\omega_g^x.
+\label{eq:Kgeo-quad}
+\end{align}
+
+\section{Element residual}
+
+Using the nodal coefficients $\vct v_A$ of the virtual displacement $\bs v^h$, Eq.~\eqref{eq:weak-int} gives
+\begin{equation}
+G^{e,\mathrm{int}}
+=
+\sum_A
+v_{Ai}
+\int_{\Omega_e}
+N_{A,j}\sigma_{ij}\,\dd v.
+\end{equation}
+Hence the internal-force contribution of node $A$ is
+\begin{equation}
+\boxed{
+(f^{e,\mathrm{int}})_{Ai}
+=
+\int_{\Omega_e}
+N_{A,j}\sigma_{ij}\,\dd v
+}
+\label{eq:fint-index}
+\end{equation}
+or, in standard matrix form,
+\begin{equation}
+\boxed{
+\vct f^{e,\mathrm{int}}
+=
+\int_{\Omega_e}
+\vct{B}^\top\vct{s}\,\dd v.
+}
+\label{eq:fint-B}
+\end{equation}
+
+\subsection{Voigt convention}
+
+Use stress vector
+\begin{equation}
+\vct{s}
+=
+[\sigma_{11},\sigma_{22},\sigma_{33},\sigma_{12},\sigma_{23},\sigma_{31}]^\top
+\end{equation}
+and engineering-strain-like vector
+\begin{equation}
+\vct{d}_{\mathrm V}
+=
+[d_{11},d_{22},d_{33},2d_{12},2d_{23},2d_{31}]^\top.
+\end{equation}
+For node $A$,
+\begin{equation}
+\vct{B}_A
+=
+\begin{bmatrix}
+N_{A,1} & 0 & 0\\
+0 & N_{A,2} & 0\\
+0 & 0 & N_{A,3}\\
+N_{A,2} & N_{A,1} & 0\\
+0 & N_{A,3} & N_{A,2}\\
+N_{A,3} & 0 & N_{A,1}
+\end{bmatrix},
+\qquad
+\vct{B}=[\vct{B}_1\ \cdots\ \vct{B}_{n_e}].
+\label{eq:Bmatrix}
+\end{equation}
+Let the ordered symmetric index pairs be
+\begin{equation}
+\mathcal I=[(1,1),(2,2),(3,3),(1,2),(2,3),(3,1)].
+\end{equation}
+For a fourth-order tangent $c_{ij\,kl}$ acting on a symmetric tensor $d_{kl}$, the $6\times6$ matrix $\vct D$ satisfying $\delta\vct s=\vct D\,\vct d_{\mathrm V}$ is defined literally by
+\begin{equation}
+D_{IJ}=
+\begin{cases}
+c_{ij\,kk}, & \mathcal I_J=(k,k),\\[1mm]
+\tfrac12\left(c_{ij\,kl}+c_{ij\,lk}\right), & \mathcal I_J=(k,l),\;k\neq l,
+\end{cases}
+\qquad \mathcal I_I=(i,j).
+\label{eq:voigt-explicit}
+\end{equation}
+If the expected minor symmetry $c_{ij\,kl}=c_{ij\,lk}$ has been established, the shear-column entry is simply $c_{ij\,kl}$. No additional factor of two is inserted because the factor is already carried by the engineering-shear component $2d_{kl}$. The six-row representation presumes the physically required symmetric Cauchy-stress variation; unexpected loss of output-pair symmetry is a diagnostic rather than something to hide by automatic symmetrization. This convention is local to the FE matrix representation; the tensor derivation itself remains independent of Voigt notation.
+
+\section{Element tangent matrix}
+
+\subsection{Truesdell formulation}
+
+Equation~\eqref{eq:DG-Truesdell} produces
+\begin{equation}
+\boxed{
+\vct{K}_e
+=
+\vct{K}_{\mathrm{mat}}
++
+\vct{K}_{\mathrm{geo}}
+}
+\label{eq:KT-total}
+\end{equation}
+with
+\begin{equation}
+\boxed{
+\vct{K}_{\mathrm{mat}}
+=
+\int_{\Omega_e}
+\vct{B}^\top
+\vct{D}^{\mathrm{T,alg}}
+\vct{B}\,\dd v
+}
+\label{eq:KT-mat}
+\end{equation}
+and the geometric block between nodes $A$ and $B$
+\begin{equation}
+\boxed{
+(K_{\mathrm{geo}})_{Ai\,Bk}
+=
+\delta_{ik}
+\int_{\Omega_e}
+N_{A,j}\sigma_{jl}N_{B,l}\,\dd v.
+}
+\label{eq:Kgeo-index}
+\end{equation}
+Equivalently,
+\begin{equation}
+\vct{K}_{\mathrm{geo},AB}
+=
+\left[
+\int_{\Omega_e}
+(\nabla_xN_A)^\top\sig\nabla_xN_B\,\dd v
+\right]\vct{I}_3.
+\label{eq:Kgeo-block}
+\end{equation}
+
+
+\section{Supported hexahedral element technologies}
+\label{sec:element-tech}
+
+The continuum and variational formulation is common to all three element formulations. They differ only in interpolation, quadrature, and, for one element, the volumetric projection used before the constitutive call.
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}p{3.2cm}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{5.3cm}}
+\toprule
+Formulation & Interpolation & Quadrature & Constitutive kinematics \\
+\midrule
+\texttt{hex8} & 8-node tri-linear & $2\times2\times2$ & Raw $\F_n^g,\F_{n+1}^g$ \\
+\texttt{hex8\_fbar} & 8-node tri-linear & $2\times2\times2$ plus centroid projection & $\Fb_n^g,\Fb_{n+1}^g$ through the same callback slots \\
+\texttt{hex20} & 20-node quadratic serendipity & $3\times3\times3$ & Raw $\F_n^g,\F_{n+1}^g$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The standard full-integration algorithm in Section~\ref{sec:algo-T} is therefore one kernel parameterized by shape functions and quadrature and covers \texttt{hex8} and \texttt{hex20}. Section~\ref{sec:algo-Fbar} gives the distinct centroidal $\bar F$ Hex8 wrapper. All three supported formulations return the same element-level objects: internal force, consistent tangent, and trial material-point state.
+\section{Centroidal \texorpdfstring{$\bar F$}{F-bar} Hex8 formulation}
+\label{sec:fbar-hex8}
+
+The classical $\bar F$ construction is used here only for the tri-linear Hex8 element. The purpose is to reduce the number of independent volumetric constraints while leaving the deviatoric part of the deformation gradient local to each Gauss point. The formulation is displacement-only and introduces no pressure degree of freedom.
+
+\subsection{Projected deformation gradient}
+
+At Gauss point $g$, let
+\begin{equation}
+\F_g=\vct J_{x,g}\vct J_{0,g}^{-1},
+\qquad
+J_g=\det\F_g.
+\end{equation}
+At the element centroid $c$, evaluate the same isoparametric maps and define
+\begin{equation}
+\F_c=\vct J_{x,c}\vct J_{0,c}^{-1},
+\qquad
+J_c=\det\F_c.
+\end{equation}
+For three dimensions define
+\begin{equation}
+\boxed{
+\alpha_g=\left(\frac{J_c}{J_g}\right)^{1/3},
+\qquad
+\Fb_g=\alpha_g\F_g.
+}
+\label{eq:fbar-def}
+\end{equation}
+Then
+\begin{equation}
+\det\Fb_g=J_c
+\end{equation}
+for every Gauss point. Thus every integration point receives the same element-level volumetric deformation, while
+\begin{equation}
+J_g^{-1/3}\F_g
+=
+J_c^{-1/3}\Fb_g
+\end{equation}
+shows that its isochoric deformation is unchanged.
+
+The projection is applied independently at the committed configuration $\Omega_n$ and at every Newton-trial configuration $\Omega_{n+1}^{(i)}$ associated with the fixed target $t_{n+1}$:
+\begin{equation}
+\Fb_n^g=\alpha_{n,g}\F_n^g,
+\qquad
+\Fb_{n+1}^{g,(i)}=\alpha_{n+1,g}^{(i)}\F_{n+1}^{g,(i)}.
+\label{eq:fbar-two-endpoints}
+\end{equation}
+The centroid has no stress, constitutive state, or return-mapping solve associated with it.
+
+\subsection{The material interface is unchanged}
+\label{sec:fbar-interface}
+
+The constitutive update is deliberately unaware of the element technology. Define the kinematic argument supplied by the element wrapper as
+\begin{equation}
+\F^{\mathrm{mat},g}
+=
+\begin{cases}
+\F_g,&\text{standard element},\\
+\Fb_g,&\text{$\bar F$ Hex8 element}.
+\end{cases}
+\label{eq:Fmat-wrapper}
+\end{equation}
+Both elements therefore call exactly the same routine,
+\begin{equation}
+\boxed{
+\mathcal M
+\left(
+\F_n^{\mathrm{mat},g},
+\F_{n+1}^{\mathrm{mat},g,(i)},
+\mathcal H_n^g,t_n,t_{n+1},\ldots
+\right)
+\rightarrow
+\left(
+\Pstress_{n+1}^{\mathrm{mat},g,(i)},
+\mathbb A_{n+1,g}^{\mathrm{mat,alg},(i)},
+\widehat{\mathcal H}_{n+1}^{g,(i)}
+\right).
+}
+\label{eq:fbar-same-material-interface}
+\end{equation}
+For the $\bar F$ element the returned quantities are denoted $\Pb_g$ and $\Ab_g$ below, with
+\begin{equation}
+\Ab_g
+=
+\frac{D\Pb_g}{D\Fb_g}
+\end{equation}
+for the complete discrete constitutive update. A crystal-plasticity routine therefore performs the same return mapping and returns the same kinds of quantities as it does for a standard element; only the deformation gradients supplied by the element wrapper differ.
+
+This point is important for history-dependent materials. On every global Newton iteration, the $\bar F$ material update is rerun from the committed pair $\Fb_n^g,\mathcal H_n^g$ to the current trial endpoint $\Fb_{n+1}^{g,(i)}$. Raw $\F_g$ is used by the element geometry, but the constitutive history for this element is driven consistently by $\Fb_g$.
+
+\subsection{Modified stress used in the current weak form}
+
+From the material return at $\Fb_g$, define the associated Cauchy stress
+\begin{equation}
+\boxed{
+\sigb_g
+=
+\frac{1}{J_c}\Pb_g\Fb_g^\top.
+}
+\label{eq:fbar-cauchy}
+\end{equation}
+The current-configuration internal virtual work keeps exactly the same spatial form as the standard element,
+\begin{equation}
+\boxed{
+\overline G^{e,\mathrm{int}}
+=
+\int_{\Omega_e}
+\nabla_x\bs v:\sigb\,\dd v.
+}
+\label{eq:fbar-current-weak}
+\end{equation}
+Consequently, the ordinary spatial $\vct B$ matrix and the actual current volume $\dd v$ are used in the residual. The projection acts through the stress supplied to this otherwise unchanged weak form.
+
+It is useful to pull Eq.~\eqref{eq:fbar-current-weak} back to $\Omega_0$ for the tangent derivation. Define an effective first Piola stress conjugate to the \emph{raw} deformation gradient:
+\begin{align}
+\Peff_g
+&=J_g\sigb_g\F_g^{-\top}\\
+&=\boxed{\alpha_g^{-2}\Pb_g}.
+\label{eq:fbar-Peff}
+\end{align}
+Hence
+\begin{equation}
+\overline G^{e,\mathrm{int}}
+=
+\int_{\Omega_{0e}}\Grad\bs v:\Peff\,\dd V,
+\end{equation}
+and the nodal internal force may be evaluated equivalently as
+\begin{equation}
+\boxed{
+\overline f_{Ai}^{e,\mathrm{int}}
+=
+\sum_g
+N_{A,I}^{g}\,
+(P_{iI}^{\mathrm{eff}})_g\,
+\det\vct J_{0,g}W_g.
+}
+\label{eq:fbar-residual-reference}
+\end{equation}
+Equation~\eqref{eq:fbar-residual-reference} and the spatial residual $\sum_g\vct B_g^\top\overline{\vct s}_g\det\vct J_{x,g}W_g$ are algebraically identical.
+
+\subsection{Consistent linearization of the projected material response}
+\label{sec:fbar-linearization}
+
+Let $\Delta\bs u$ be an arbitrary Newton perturbation direction and denote its induced kinematic variations by
+\begin{equation}
+\delta\F_g=\Grad\Delta\bs u\big|_g,
+\qquad
+\delta\F_c=\Grad\Delta\bs u\big|_c.
+\end{equation}
+The directional change of the scalar projection factor is
+\begin{equation}
+\boxed{
+q_g
+:=\frac{\delta\alpha_g}{\alpha_g}
+=
+\frac{1}{3}
+\left(
+\F_c^{-\top}:\delta\F_c
+-
+\F_g^{-\top}:\delta\F_g
+\right).
+}
+\label{eq:fbar-q}
+\end{equation}
+Therefore
+\begin{equation}
+\boxed{
+\delta\Fb_g
+=
+\alpha_g\left(\delta\F_g+q_g\F_g\right)
+}
+\label{eq:fbar-dFbar}
+\end{equation}
+and, because $\Peff=\alpha^{-2}\Pb$,
+\begin{equation}
+\boxed{
+\delta\Peff_g
+=
+\alpha_g^{-2}
+\left[
+\Ab_g:\delta\Fb_g
+-2q_g\Pb_g
+\right].
+}
+\label{eq:fbar-dPeff}
+\end{equation}
+Equations~\eqref{eq:fbar-q}--\eqref{eq:fbar-dPeff} are the central implementation formulas. They require no new material tangent: the element uses exactly the $D\Pstress/D\F$ object returned by the constitutive update, evaluated at the deformation gradient that the wrapper supplied.
+
+For explicit matrix assembly, define
+\begin{equation}
+\bs Q_g
+=
+\alpha_g^{-2}
+\left[
+\Ab_g:\Fb_g-2\Pb_g
+\right].
+\label{eq:fbar-Q}
+\end{equation}
+For a unit perturbation of nodal degree of freedom $(B,k)$,
+\begin{align}
+\delta\F_g^{Bk}
+&=\bs e_k\otimes\nabla_XN_B|_g,\\
+\delta\F_c^{Bk}
+&=\bs e_k\otimes\nabla_XN_B|_c,
+\end{align}
+so that
+\begin{equation}
+q_g^{Bk}
+=
+\frac{1}{3}
+\left[
+(\F_c^{-\top})_{kK}N_{B,K}^{c}
+-
+(\F_g^{-\top})_{kK}N_{B,K}^{g}
+\right].
+\label{eq:fbar-q-basis}
+\end{equation}
+Substitution into Eq.~\eqref{eq:fbar-dPeff} gives the exact element block
+\begin{equation}
+\boxed{
+\begin{aligned}
+(\vct K_e^{\bar F})_{Ai,Bk}
+=\sum_g\det\vct J_{0,g}W_g\,N_{A,I}^{g}
+\bigg\{&
+\alpha_g^{-1}(\Ab_g)_{iI kK}N_{B,K}^{g}\\
+&+\frac{1}{3}(Q_g)_{iI}
+\left[
+(\F_c^{-\top})_{kK}N_{B,K}^{c}
+-(\F_g^{-\top})_{kK}N_{B,K}^{g}
+\right]
+\bigg\}.
+\end{aligned}
+}
+\label{eq:fbar-K-reference}
+\end{equation}
+This tangent is generally nonsymmetric, even for a conservative material, because the classical centroidal $\bar F$ projection modifies the trial kinematics without symmetrically modifying the test side of the weak form.
+
+\subsection{Equivalent updated-Lagrangian tangent split}
+
+Equation~\eqref{eq:fbar-K-reference} is convenient for implementation and verification, but the same tangent can be expressed directly in the current Newton-trial configuration. Define
+\begin{equation}
+\bs h_g=\delta\F_g\F_g^{-1},
+\qquad
+\bs h_c=\delta\F_c\F_c^{-1},
+\qquad
+q_g=\frac{1}{3}\left(\tr\bs h_c-\tr\bs h_g\right),
+\end{equation}
+and
+\begin{equation}
+\overline{\bs h}_g=\bs h_g+q_g\I,
+\qquad
+\overline{\bs d}_g=\sym\overline{\bs h}_g=\bs d_g+q_g\I.
+\end{equation}
+If $\cbaralgT_g$ is the Truesdell tangent obtained by pushing $\Ab_g$ forward using $\Fb_g$ and $J_c$, the consistent directional derivative of Eq.~\eqref{eq:fbar-current-weak} is
+\begin{equation}
+\boxed{
+D\overline G^{e,\mathrm{int}}[\Delta\bs u]
+=
+\int_{\Omega_e}
+\nabla_x\bs v:
+\left[
+\cbaralgT:\overline{\bs d}
++\bs h\sigb
+-q\sigb
+\right]\dd v.
+}
+\label{eq:fbar-current-linearization}
+\end{equation}
+The three visible pieces are a projected material term, the ordinary geometric term, and an additional projection correction. The split is an implementation organization; Eq.~\eqref{eq:fbar-dPeff} is the compact rate-neutral statement of the same tangent.
+
+For each trial degree of freedom $(B,k)$, the projection scalar has the especially simple spatial form
+\begin{equation}
+\boxed{
+q_g^{Bk}
+=\frac{1}{3}
+\left[
+(\nabla_xN_B|_c)_k-(\nabla_xN_B|_g)_k
+\right].
+}
+\label{eq:fbar-q-spatial}
+\end{equation}
+Define a projected strain-displacement matrix column by
+\begin{equation}
+\overline{\vct B}^{\,g}_{B}(:,k)
+=
+\vct B^{\,g}_{B}(:,k)
++q_g^{Bk}
+\begin{bmatrix}1&1&1&0&0&0\end{bmatrix}^{\top}.
+\label{eq:fbar-Bbar}
+\end{equation}
+Here $\vct B_B^{\,g}\in\R^{6\times3}$ is the usual node-$B$ block of the strain--displacement matrix at Gauss point $g$, $k\in\{1,2,3\}$ selects one of its displacement-component columns, and $(:,k)$ denotes that column. Equivalently, the three columns define the projected block $\overline{\vct B}_B^{\,g}\in\R^{6\times3}$. This is finite-dimensional matrix notation, not a continuum tensor index.
+
+Then the material part can be assembled as
+\begin{equation}
+\boxed{
+\vct K_{\mathrm{mat}}^{\bar F}
+=\sum_g
+\vct B_g^\top
+\overline{\vct D}^{\mathrm{T,alg}}_g
+\overline{\vct B}_g\,\omega_g^x,
+}
+\label{eq:fbar-Kmat-spatial}
+\end{equation}
+while the standard geometric block is
+\begin{equation}
+\vct K_{\mathrm{geo},AB}^{\bar F}
+=\sum_g
+\left[(\nabla_xN_A)_g^\top\sigb_g(\nabla_xN_B)_g\right]
+\vct I_3\,\omega_g^x.
+\end{equation}
+Finally, with
+\begin{equation}
+\bs q_{B,g}
+=\frac{1}{3}\left(\nabla_xN_B|_c-\nabla_xN_B|_g\right),
+\end{equation}
+the projection-correction block is
+\begin{equation}
+\boxed{
+\vct K_{\mathrm{proj},AB}^{\bar F}
+=-\sum_g
+\left(\sigb_g\nabla_xN_A|_g\right)
+\otimes\bs q_{B,g}\,\omega_g^x.
+}
+\label{eq:fbar-Kproj}
+\end{equation}
+Thus
+\begin{equation}
+\boxed{
+\vct K_e^{\bar F}
+=
+\vct K_{\mathrm{mat}}^{\bar F}
++\vct K_{\mathrm{geo}}^{\bar F}
++\vct K_{\mathrm{proj}}^{\bar F}.
+}
+\label{eq:fbar-Ksplit}
+\end{equation}
+The third term is caused by the nonlocal volumetric projection; it is not an additional material constitutive tangent returned by the constitutive update.
+
+\part{Nonlinear solution method}
+
+\section{Pseudo-time discretization and increment control}
+\label{sec:time-increments}
+
+Pseudo-time $t$ is a monotonically increasing parameter used to trace the prescribed loading path. The equilibrium equations are quasi-static, so $t$ need not represent physical time for a rate-independent material. A rate-dependent constitutive law may, however, use the physical increment $\Delta t=t_{n+1}-t_n$ explicitly.
+
+The nonlinear problem is advanced through accepted states
+\begin{equation}
+0=t_0<t_1<\cdots<t_n<t_{n+1}\le t_{\mathrm{end}}.
+\end{equation}
+The loading and prescribed kinematic data are evaluated at the target endpoint $t_{n+1}$. If a trial increment fails to converge, all trial quantities are discarded and the same advance from the committed state at $t_n$ is attempted with a smaller $\Delta t$. If the step converges, the endpoint becomes the new committed state.
+
+For path-dependent constitutive behavior, increments should not cross discontinuities or kinks in the prescribed loading path without explicitly landing on them. The concrete event schedule, minimum/maximum step sizes, output synchronization, and cutback/growth policy are implementation-control choices and are specified separately in the implementation document.
+
+\section{Gauss-point committed and trial state}
+\label{sec:gp-state}
+
+At each Gauss point the solver stores a model-owned committed constitutive state
+\begin{equation}
+\mathcal H_n^g.
+\end{equation}
+The contents and length of $\mathcal H$ are defined by the selected constitutive model. Examples include plastic deformation gradients, slip resistances, accumulated slips, evolving lattice orientation, hardening variables, or any other history required by the finite-increment update.
+
+Geometry is kept separate from constitutive state. The committed deformation gradient $\F_n^g$ is reconstructed from the reference coordinates and committed nodal displacement $\vct u_n$ whenever the element is evaluated. Likewise, stress and tangent are material responses, not independently committed solver history unless a particular material model explicitly includes such quantities in its own state.
+
+At global Newton iteration $i$ for the fixed target pseudo-time $t_{n+1}$, the element constructs the trial kinematics and calls the native material update using the same $\mathcal H_n^g$ on every global iteration. It receives a provisional state
+\begin{equation}
+\widehat{\mathcal H}_{n+1}^{g,(i)}
+\end{equation}
+that exists only in a trial buffer. No trial state is used as the starting state of the next global Newton iteration. Only after global convergence is
+\begin{equation}
+\mathcal H_{n+1}^g
+\leftarrow
+\widehat{\mathcal H}_{n+1}^{g,(i)}
+\end{equation}
+committed atomically for all Gauss points.
+
+\subsection{Finite-increment constitutive integration is a separate local problem}
+
+Writing equilibrium at $t_n$ and $t_{n+1}$ does not define the material integration algorithm. A continuous rate description such as
+\begin{equation}
+\overset{\mathrm T}{\sig}=\cT:\dten
+\end{equation}
+does not by itself provide the discrete material map required by the finite element code. The local constitutive implementation must instead construct
+\begin{equation}
+(\F_n,\mathcal H_n)
+\longrightarrow
+(\Pstress_{n+1},\mathcal H_{n+1})
+\end{equation}
+using an appropriate finite-increment algorithm, for example a direct hyperelastic evaluation, implicit return mapping, exponential-map update, or crystal-plasticity solve. Its total derivative with respect to the trial endpoint is the algorithmic tangent $\Aalg$.
+
+
+\subsection{Geometry and local-failure classification}
+
+The solver distinguishes model errors from recoverable trial failures. A nonpositive or numerically degenerate reference mapping $\det\vct J_0\le0$ is a fatal mesh/model error. A committed configuration that cannot reconstruct a valid positive-$J$ deformation is likewise fatal because cutback cannot repair already accepted history. By contrast, if the current Newton trial $\Omega_{n+1}^{(i)}$ produces $\det\vct J_x\le0$, $J=\det\F\le0$, an invalid $\bar F$ projection, or a recoverable local constitutive failure, the current increment attempt is abandoned and may be retried from the unchanged committed state with a cutback. Repeated failure is handled by the increment-control policy; if no admissible smaller increment remains, the analysis terminates.
+
+\section{Global nonlinear solution with exact linear displacement constraints}
+\label{sec:global-kkt}
+
+The element kernels developed above return unconstrained element residual and tangent contributions. General prescribed displacements, multipoint constraints, and periodic RVE kinematics are imposed only after global assembly. To avoid elimination of dependent displacement degrees of freedom, the selected global formulation uses Lagrange multipliers and solves the displacement and constraint equations simultaneously as a sparse saddle-point system.
+
+\subsection{General affine displacement constraints}
+
+Let the assembled displacement vector contain $N$ displacement degrees of freedom,
+\begin{equation}
+\vct{u}\in\mathbb{R}^{N},
+\end{equation}
+and let $m$ independent linear kinematic constraints be written as
+\begin{equation}
+\boxed{
+\vct{C}\vct{u}=\vct{d},
+}
+\label{eq:Cu-d}
+\end{equation}
+where
+\begin{equation}
+\vct{C}\in\mathbb{R}^{m\times N},
+\qquad
+\vct{d}\in\mathbb{R}^{m}.
+\end{equation}
+The matrix $\vct C$ is normally extremely sparse. A prescribed displacement $u_j=\bar u_j$ requires a row with a single unit entry. A general multipoint constraint
+\begin{equation}
+\sum_{a=1}^{n_c}c_a u_{j_a}=\bar d
+\end{equation}
+requires only $n_c$ nonzero coefficients in that row.
+
+For a periodic pair of reference points $\bs X^+$ and $\bs X^-$ under prescribed macroscopic deformation gradient $\overline{\F}$, the displacement-periodicity condition is
+\begin{equation}
+\boxed{
+\bs u^+-\bs u^-
+=
+(\overline{\F}-\I)(\bs X^+-\bs X^-).
+}
+\label{eq:periodic-pair}
+\end{equation}
+Each Cartesian component gives one row of $\vct C$ with coefficients $+1$ and $-1$ in the paired displacement degrees of freedom. The right-hand side $\vct d$ changes with the prescribed macroscopic loading, while $\vct C$ can remain fixed when the node pairing and reference geometry are fixed. Periodic pair constraints alone leave a rigid translation mode; one reference-node displacement or an equivalent zero-mean condition must also be supplied.
+
+The constraints are assumed to have independent rows. Redundant constraints can make the augmented system singular even if every individual equation is physically reasonable. Removing obvious rigid modes is necessary but is not, for a general nonsymmetric tangent, a complete solvability test. The precise local condition is stated in Section~\ref{sec:kkt-solvability} using the tangent restricted to the admissible displacement space.
+
+\subsection{Lagrange-multiplier equilibrium system}
+
+The unconstrained mechanical residual remains
+\begin{equation}
+\vct{R}(\vct u)
+=
+\vct f^{\mathrm{int}}(\vct u)
+-
+\vct f^{\mathrm{ext}}.
+\label{eq:global-residual}
+\end{equation}
+Introduce the multiplier vector
+\begin{equation}
+\vct\lambda\in\mathbb{R}^{m}.
+\end{equation}
+Using the sign convention adopted here, the constrained nonlinear equations are
+\begin{equation}
+\boxed{
+\mathcal{R}(\vct u,\vct\lambda)
+=
+\begin{bmatrix}
+\vct R(\vct u)+\vct C^\top\vct\lambda\\[1mm]
+\vct C\vct u-\vct d
+\end{bmatrix}
+=
+\vct0.
+}
+\label{eq:kkt-residual}
+\end{equation}
+The nodal force exerted by the constraints on the displacement system is, with this sign convention,
+\begin{equation}
+\vct f^{\mathrm{con}}=-\vct C^\top\vct\lambda.
+\end{equation}
+Thus the invariant physical constraint-force vector is $\vct f^{\mathrm{con}}=-\vct C^\top\vct\lambda$. Individual multiplier components depend on the chosen scaling and basis of the constraint rows: if one equation is multiplied by a nonzero scalar, its multiplier rescales inversely while $\vct C^\top\vct\lambda$ is unchanged. For periodic constraints, different but equivalent spanning trees likewise produce different multiplier coordinates. Reactions and homogenization diagnostics should therefore be based on assembled nodal constraint forces (or quantities derived from them), not on raw multiplier values alone. For a single retained periodic pair row, the structure of $\vct C^\top\vct\lambda$ produces equal and opposite nodal pair forces.
+
+Because the constraints are linear and are taken to be independent of the unknown displacement within an increment, the Newton Jacobian is
+\begin{equation}
+\boxed{
+\vct{K}_{\mathrm{KKT}}^{(i)}
+=
+\begin{bmatrix}
+\vct K^{(i)} & \vct C^\top\\
+\vct C & \vct0
+\end{bmatrix},
+}
+\label{eq:kkt-matrix}
+\end{equation}
+where
+\begin{equation}
+\vct K^{(i)}
+=
+\frac{\partial\vct f^{\mathrm{int}}}{\partial\vct u}
+\bigg|_{\vct u^{(i)}}
+\end{equation}
+contains the assembled material, geometric, and $\bar F$ projection terms appropriate to the selected elements.
+
+At Newton iteration $i$ the simultaneous correction is obtained from
+\begin{equation}
+\boxed{
+\begin{bmatrix}
+\vct K^{(i)} & \vct C^\top\\
+\vct C & \vct0
+\end{bmatrix}
+\begin{bmatrix}
+\Delta\vct u^{(i)}\\
+\Delta\vct\lambda^{(i)}
+\end{bmatrix}
+=
+-
+\begin{bmatrix}
+\vct f^{\mathrm{int},(i)}-\vct f^{\mathrm{ext}}+\vct C^\top\vct\lambda^{(i)}\\
+\vct C\vct u^{(i)}-\vct d
+\end{bmatrix}.
+}
+\label{eq:kkt-newton}
+\end{equation}
+The updates are
+\begin{align}
+\vct u^{(i+1)}&=\vct u^{(i)}+\Delta\vct u^{(i)},\\
+\vct\lambda^{(i+1)}&=\vct\lambda^{(i)}+\Delta\vct\lambda^{(i)}.
+\end{align}
+No constrained displacement is eliminated, and $\vct K$ is not separately factorized. The complete sparse matrix of Eq.~\eqref{eq:kkt-newton} is supplied to the linear solver.
+
+For the linear special case $\vct R=\vct K\vct u-\vct f$, Eq.~\eqref{eq:kkt-newton} reduces directly to
+\begin{equation}
+\boxed{
+\begin{bmatrix}
+\vct K & \vct C^\top\\
+\vct C & \vct0
+\end{bmatrix}
+\begin{bmatrix}
+\vct u\\
+\vct\lambda
+\end{bmatrix}
+=
+\begin{bmatrix}
+\vct f\\
+\vct d
+\end{bmatrix}.
+}
+\label{eq:kkt-linear}
+\end{equation}
+This is the standard Lagrange-multiplier saddle-point or KKT form for affine displacement constraints.
+
+An important property of linear constraints is that the second block row of Eq.~\eqref{eq:kkt-newton} gives
+\begin{equation}
+\vct C\Delta\vct u^{(i)}
+=-(\vct C\vct u^{(i)}-\vct d).
+\end{equation}
+Therefore, after one accurately solved Newton correction the trial displacement satisfies the linear constraints to linear-solver tolerance. Subsequent corrections within the same increment satisfy $\vct C\Delta\vct u\simeq\vct0$ because $\vct d$ is fixed at the target pseudo-time.
+
+
+\subsection{Indefiniteness, solvability, and physical relevance}
+\label{sec:kkt-solvability}
+
+The KKT matrix in Eq.~\eqref{eq:kkt-matrix} is normally \emph{indefinite}; this is not the same as being indeterminate or singular. The zero multiplier block introduces positive and negative algebraic directions even when the constrained mechanical problem has a unique stable solution.
+
+Assume $\vct C$ has full row rank and let the columns of $\vct Z$ form a basis of the admissible homogeneous displacement space,
+\begin{equation}
+\vct C\vct Z=\vct0.
+\end{equation}
+Then the local constrained Newton problem has a unique displacement correction if and only if the reduced tangent
+\begin{equation}
+\boxed{\vct K_{\mathrm{red}}=\vct Z^\top\vct K\vct Z}
+\label{eq:Kred}
+\end{equation}
+is nonsingular. This statement applies also when $\vct K$ is nonsymmetric. The easier diagnostic $\ker(\vct K)\cap\ker(\vct C)=\{\vct0\}$ is necessary in common cases but is not used as the general sufficient condition here.
+
+For a symmetric conservative problem, $\vct K_{\mathrm{red}}\succ0$ is the familiar local stability condition. The KKT matrix can remain indefinite while this reduced tangent is positive definite. Conversely, loss of rank or definiteness of the reduced mechanical tangent can signal a genuine instability rather than a boundary-condition error. These are \emph{local} statements: a nonsingular tangent does not exclude the existence of multiple remote nonlinear equilibrium branches.
+
+A singular factorization must therefore be diagnosed rather than interpreted automatically as nonlinear nonconvergence. Common setup causes are an unremoved rigid mode, linearly dependent rows of $\vct C$, or inconsistent constraints. Mechanical causes include an invalid/degenerate element and an actual loss of rank associated with material or structural instability. For the small verification problems, a debug mode may check the numerical rank of $\vct C$ and, for symmetric cases, the smallest eigenvalues of a reduced tangent. These checks are diagnostic only and are not part of the production sparse solve.
+
+\subsection{Sparse storage and linear solution strategy}
+
+The Lagrange-multiplier formulation preserves the sparsity inherited from finite element assembly, but it changes the matrix class. Even when $\vct K$ is symmetric positive definite on unconstrained displacement space, the zero multiplier block makes the KKT matrix indefinite. If $\vct K$ is nonsymmetric, as is permitted here, the complete KKT matrix is generally nonsymmetric and indefinite.
+
+The baseline solution strategy is therefore a sparse factorization or sparse linear solver that accepts a general indefinite matrix. No separate factorization of the unconstrained $\vct K$ is required. For symmetric problems, symmetric-indefinite methods are possible; for general nonsymmetric problems, a nonsymmetric sparse direct method or a suitably preconditioned Krylov method is required. A separate implementation specification selects concrete libraries and storage formats.
+
+For exact Newton, $\vct K^{(i)}$ changes and the KKT operator is normally rebuilt/refactorized at each iteration. For modified Newton, the selected tangent may be held fixed while stresses, residuals, and trial constitutive states are still recomputed at every displacement iterate.
+
+The multiplier equations and displacement equations have different physical units, and arbitrary multipoint coefficients can differ greatly in magnitude. Rescaling one constraint row and the corresponding entry of $\vct d$ by the same nonzero scalar leaves the admissible displacement set unchanged but rescales its multiplier. Sensible row scaling is therefore a conditioning device; physical reactions should be interpreted through $-\vct C^\top\vct\lambda$, which is invariant under such row rescaling.
+
+\subsection{Relation between global Newton and the local material tangent}
+
+The local material-point update remains exactly as developed in the preceding sections. At global iteration $i$, every element is evaluated using the current trial nodal displacement $\vct u_{n+1}^{(i)}$ but the committed Gauss-point state at $t_n$. The element returns its trial state, internal force, and consistent element tangent. Global assembly produces
+\begin{equation}
+\vct f^{\mathrm{int},(i)},
+\qquad
+\vct K^{(i)}.
+\end{equation}
+The constraint blocks do not alter the local constitutive update. They enter only after assembly through Eq.~\eqref{eq:kkt-newton}.
+
+A consistent local algorithmic tangent makes the assembled mechanical block $\vct K$ consistent with the actual discrete constitutive update. This supports quadratic convergence when the global residual is smooth, the active set is stable, the full tangent is rebuilt, and the linear KKT system is solved sufficiently accurately. The Lagrange-multiplier constraints do not require a different material tangent.
+
+A modified Newton method may hold $\vct K$ fixed over several iterations. This does not alter material state logic: at every trial displacement the material update and internal force must still be reevaluated from the committed $t_n$ state. Only the tangent assembly/factorization may be skipped according to the selected modified-Newton policy. The first correction of a new increment attempt must have a valid tangent/factorization; a modified-Newton policy therefore refreshes at least once at the start of each attempt unless it explicitly and safely reuses a tangent from the same accepted-state linearization.
+
+
+
+\part{Element and global algorithms}
+\section{Element algorithm: standard full-integration formulation}
+\label{sec:algo-T}
+
+The algorithm below covers both standard full-integration element formulations: Hex8, Hex20. The only element-type-specific inputs are shape functions, derivatives, node count, and quadrature. It starts from reference/committed/trial nodal data and committed Gauss-point states and returns the element internal force, tangent, and trial Gauss-point states. It contains no global assembly or boundary-condition enforcement. All spatial gradients, current quadrature volumes, Cauchy stresses, and spatial tangent matrices in an iteration are associated with the trial geometry $\Omega_{n+1}^{(i)}$; committed geometry is used only to reconstruct the beginning-of-increment kinematics supplied to the material update.
+
+\subsection*{Inputs}
+\begin{itemize}
+    \item element formulation $e_{\rm type}\in\{\texttt{hex8},\texttt{hex20}\}$ and its shape-function/quadrature tables;
+    \item reference nodal coordinates $\{\bs{X}_A\}_{A=1}^{n_e}$;
+    \item committed nodal displacement $\{\bs{u}_{A,n}\}$;
+    \item current trial nodal displacement $\{\bs{u}_{A,n+1}^{(i)}\}$;
+    \item committed Gauss-point states $\{\mathcal{H}_n^g\}$;
+    \item constitutive model data and pseudo-time endpoints $(t_n,t_{n+1})$.
+\end{itemize}
+
+\subsection*{Outputs}
+\begin{itemize}
+    \item $\vct f^{e,\mathrm{int}}$;
+    \item $\vct{K}_e$;
+    \item trial histories $\{\widehat{\mathcal{H}}_{n+1}^{g,(i)}\}$;
+    \item optional element/material status requesting a global cutback.
+\end{itemize}
+
+\subsection*{Procedure}
+\begin{enumerate}
+    \item Set
+    \begin{equation*}
+    \vct f^{e,\mathrm{int}}=\vct{0},\qquad
+    \vct{K}_{\mathrm{mat}}=\vct{0},\qquad
+    \vct{K}_{\mathrm{geo}}=\vct{0}.
+    \end{equation*}
+
+    \item Construct the committed and current trial nodal positions
+    \begin{equation*}
+    \bs{x}_{A,n}=\bs{X}_A+\bs{u}_{A,n},
+    \qquad
+    \bs{x}_{A,n+1}^{(i)}=\bs{X}_A+\bs{u}_{A,n+1}^{(i)}.
+    \end{equation*}
+
+    \item For every Gauss point of the selected full-integration rule:
+    \begin{enumerate}
+        \item Evaluate $N_A(\bs{\xi}_g)$ and $\nabla_{\xi}N_A(\bs{\xi}_g)$.
+
+        \item Compute the reference, committed, and current-trial element Jacobians
+        \begin{equation*}
+        \vct{J}_{0,g},\qquad
+        \vct{J}_{x,n,g},\qquad
+        \vct{J}_{x,n+1,g}^{(i)}.
+        \end{equation*}
+        Reject or flag the element if an admissible positive Jacobian condition is violated.
+
+        \item Compute
+        \begin{equation*}
+        \nabla_XN_A=\vct{J}_0^{-\top}\nabla_{\xi}N_A,
+        \qquad
+        \nabla_xN_A=(\vct{J}_{x,n+1}^{(i)})^{-\top}\nabla_{\xi}N_A.
+        \end{equation*}
+
+        \item Compute both endpoint deformation gradients from geometry,
+        \begin{equation*}
+        \F_n^g=\vct{J}_{x,n,g}\vct{J}_{0,g}^{-1},
+        \qquad
+        \F_{n+1}^{g,(i)}=\vct{J}_{x,n+1,g}^{(i)}\vct{J}_{0,g}^{-1},
+        \qquad
+        J_{n+1}^{g,(i)}=\det\F_{n+1}^{g,(i)}.
+        \end{equation*}
+
+        \item Evaluate the discrete material map
+        \begin{equation*}
+        \mathcal M
+        \left(\F_n^g,\F_{n+1}^{g,(i)},\mathcal H_n^g,t_n,t_{n+1}\right)
+        \longrightarrow
+        \left(\Pstress_{n+1}^{g,(i)},\mathbb A_{n+1,g}^{\mathrm{alg},(i)},\widehat{\mathcal H}_{n+1}^{g,(i)}\right).
+        \end{equation*}
+        If the local constitutive update has no admissible solution at the trial endpoint, return a recoverable failure without modifying committed history.
+
+        \item Convert the returned first Piola stress to Cauchy stress:
+        \begin{equation*}
+        \sig_{n+1}^{g,(i)}
+        =\frac{1}{J_{n+1}^{g,(i)}}
+        \Pstress_{n+1}^{g,(i)}
+        (\F_{n+1}^{g,(i)})^\top.
+        \end{equation*}
+
+        \item Push $\Aalg$ forward using Eqs.~\eqref{eq:a-pushforward} and \eqref{eq:cT-from-A} to obtain $\calgT_g$, then convert it consistently to the $6\times6$ matrix $\vct{D}^{\mathrm{T,alg}}_g$ using the engineering-shear convention.
+
+        \item Construct the current $\vct{B}_g$ matrix from $\nabla_xN_A$.
+
+        \item Define the current quadrature volume
+        \begin{equation*}
+        \omega_g^x=\det\vct{J}_{x,n+1,g}^{(i)}W_g.
+        \end{equation*}
+
+        \item Accumulate internal force
+        \begin{equation*}
+        \vct f^{e,\mathrm{int}}
+        \mathrel{+}=\vct{B}_g^\top\vct{s}_g\omega_g^x.
+        \end{equation*}
+
+        \item Accumulate material tangent
+        \begin{equation*}
+        \vct{K}_{\mathrm{mat}}
+        \mathrel{+}=\vct{B}_g^\top\vct{D}^{\mathrm{T,alg}}_g\vct{B}_g\omega_g^x.
+        \end{equation*}
+
+        \item For each node pair $A,B$, accumulate the $3\times3$ geometric block
+        \begin{equation*}
+        \vct{K}_{\mathrm{geo},AB}
+        \mathrel{+}=
+        \left[(\nabla_xN_A)^\top\sig_g\nabla_xN_B\right]\vct{I}_3\omega_g^x.
+        \end{equation*}
+
+        \item Store $\widehat{\mathcal{H}}_{n+1}^{g,(i)}$ as a trial result only.
+    \end{enumerate}
+
+    \item Form
+    \begin{equation*}
+    \boxed{
+    \vct{K}_e
+    =\vct{K}_{\mathrm{mat}}+\vct{K}_{\mathrm{geo}}.
+    }
+    \end{equation*}
+\end{enumerate}
+
+\begin{algorithmbox}{Final element kernel -- standard full-integration element}
+\textbf{Input:} $\{\bs{X}_A\}$, committed $\{\bs{u}_{A,n}\}$, trial $\{\bs{u}_{A,n+1}^{(i)}\}$, committed Gauss-point state $\{\mathcal H_n^g\}$, resolved material/property data, $(t_n,t_{n+1})$.
+
+\begin{enumerate}[leftmargin=1.7em,label=\arabic*.,itemsep=0.15em,topsep=0.2em]
+\item Form both $\bs{x}_{A,n}=\bs{X}_A+\bs{u}_{A,n}$ and $\bs{x}_{A,n+1}^{(i)}=\bs{X}_A+\bs{u}_{A,n+1}^{(i)}$; zero $\vct f^{e,\mathrm{int}}$, $\vct K_{\rm mat}$, $\vct K_{\rm geo}$.
+\item For each Gauss point ($n_g=8$ for Hex8 and $n_g=27$ for Hex20), evaluate $N_A$, $\nabla_\xi N_A$, $\vct J_0$, committed/trial $\vct J_x$, $\nabla_XN_A$, trial $\nabla_xN_A$, $\F_n=\vct J_{x,n}\vct J_0^{-1}$, $\F_{n+1}^{(i)}=\vct J_{x,n+1}^{(i)}\vct J_0^{-1}$, and $J=\det\F_{n+1}^{(i)}$.
+\item From the same committed state at $n$, evaluate the discrete material map $\mathcal M$ from $(\F_n^g,\F_{n+1}^{g,(i)},\mathcal H_n^g,t_n,t_{n+1})$ and obtain $(\Pstress_{n+1}^{g,(i)},\Aalg_g,\widehat{\mathcal H}_{n+1}^{g,(i)})$.
+\item If the local update fails, return a cutback request. Otherwise set $\sig=J^{-1}\Pstress\F^\top$.
+\item Push $\Aalg$ forward with Eqs.~\eqref{eq:a-pushforward}--\eqref{eq:cT-from-A} to obtain $\vct D^{\mathrm{T,alg}}$; form $\vct B$ and $\omega_g^x=\det(\vct J_x)W_g$.
+\item Accumulate $\vct f^{e,\mathrm{int}}\mathrel{+}=\vct B^\top\vct s\,\omega_g^x$, $\vct K_{\rm mat}\mathrel{+}=\vct B^\top\vct D^{\mathrm{T,alg}}\vct B\,\omega_g^x$, and $\vct K_{\rm geo}$ from Eq.~\eqref{eq:Kgeo-block}.
+\item Store the Gauss-point result as \emph{trial} state only.
+\end{enumerate}
+\textbf{Return:}
+\[
+\boxed{\vct K_e^{\mathrm T}=\vct K_{\rm mat}+\vct K_{\rm geo}},
+\qquad
+\vct f^{e,\mathrm{int}},
+\qquad
+\{\widehat{\mathcal H}_{n+1}^{g,(i)}\}.
+\]
+\end{algorithmbox}
+
+
+\section{Element algorithm: centroidal \texorpdfstring{$\bar F$}{F-bar} Hex8}
+\label{sec:algo-Fbar}
+
+This algorithm uses the same discrete constitutive map as the standard elements. The only additional element-level operations are the centroidal volumetric projection and the consistent chain rule derived in Section~\ref{sec:fbar-linearization}.
+
+\subsection*{Inputs and outputs}
+The inputs and outputs are identical to the standard Truesdell element algorithm, except that the element type is fixed to Hex8 with centroidal $\bar F$. In particular, the constitutive map returns the same mathematical response quantities
+\begin{equation}
+\left\{\Pstress,\Aalg,\widehat{\mathcal H}_{n+1}\right\}
+\end{equation}
+with the same meanings and tensor dimensions; only the deformation gradients supplied by the element wrapper differ.
+
+\begin{algorithmbox}{Final element kernel -- centroidal $\bar F$ Hex8}
+\textbf{Input:} reference Hex8 coordinates $\{\bs X_A\}_{A=1}^8$, committed displacement $\{\bs u_{A,n}\}$, trial displacement $\{\bs u_{A,n+1}^{(i)}\}$, committed Gauss-point state $\{\mathcal H_n^g\}_{g=1}^8$, resolved material/property data, $(t_n,t_{n+1})$.
+
+\begin{enumerate}[leftmargin=1.7em,label=\arabic*.,itemsep=0.18em,topsep=0.2em]
+\item Form committed and trial nodes $\bs x_{A,n}=\bs X_A+\bs u_{A,n}$ and $\bs x_{A,n+1}^{(i)}=\bs X_A+\bs u_{A,n+1}^{(i)}$. At $\bs\xi_c=(0,0,0)^\top$, evaluate reference, committed, and trial maps and compute $\F_{c,n}$, $J_{c,n}$, trial $\F_c$, $J_c$, and trial $\nabla_xN_A|_c$. No constitutive routine is called at the centroid.
+\item Zero $\vct f^{e,\mathrm{int}}$, $\vct K_{\rm mat}^{\bar F}$, $\vct K_{\rm geo}^{\bar F}$, and $\vct K_{\rm proj}^{\bar F}$.
+\item For each of the eight $2\times2\times2$ Gauss points:
+  \begin{enumerate}[leftmargin=1.5em,label=\alph*.,itemsep=0.12em,topsep=0.1em]
+  \item Compute $\vct J_0$, $\vct J_x$, $\nabla_XN_A$, $\nabla_xN_A$, raw $\F_g$, $J_g$, and the corresponding committed raw $\F_{n,g}$.
+  \item Form
+  \[
+  \alpha_g=(J_c/J_g)^{1/3},\qquad \Fb_g=\alpha_g\F_g,
+  \]
+  and analogously $\Fb_{n,g}=\alpha_{n,g}\F_{n,g}$ from the committed configuration.
+  \item Call the same native constitutive update used by a standard element,
+  \[
+  \mathcal M(\Fb_{n,g},\Fb_g,\mathcal H_n^g,t_n,t_{n+1})
+  \longrightarrow(\Pb_g,\Ab_g,\widehat{\mathcal H}_{n+1}^{g,(i)}).
+  \]
+  If the local update fails, return a cutback request without committing state.
+  \item Convert only with the deformation gradient seen by the material:
+  \[
+  \sigb_g=J_c^{-1}\Pb_g\Fb_g^\top.
+  \]
+  Do \emph{not} construct the stress using raw $\F_g$.
+  \item Push $\Ab_g$ forward with $\Fb_g$ and $J_c$ to obtain $\overline{\vct D}^{\mathrm{T,alg}}_g$.
+  \item Form $\vct B_g$ from the raw current gradients and, for every node $B$, set
+  \[
+  \bs q_{B,g}=\frac13\left(\nabla_xN_B|_c-\nabla_xN_B|_g\right),
+  \qquad
+  \overline{\vct B}^{\,g}_{B}(:,k)=\vct B^{\,g}_{B}(:,k)+q_{B,g,k}[1,1,1,0,0,0]^\top.
+  \]
+  \item With $\omega_g^x=\det\vct J_{x,g}W_g$, accumulate
+  \[
+  \vct f^{e,\mathrm{int}}\mathrel{+}=\vct B_g^\top\overline{\vct s}_g\omega_g^x,
+  \]
+  \[
+  \vct K_{\rm mat}^{\bar F}\mathrel{+}=\vct B_g^\top\overline{\vct D}^{\mathrm{T,alg}}_g\overline{\vct B}_g\omega_g^x,
+  \]
+  the ordinary geometric blocks using $\sigb_g$, and
+  \[
+  \vct K_{\rm proj,AB}^{\bar F}\mathrel{+}=
+  -\left(\sigb_g\nabla_xN_A\right)\otimes\bs q_{B,g}\,\omega_g^x.
+  \]
+  \item Store the returned Gauss-point state as trial state only.
+  \end{enumerate}
+\item Return
+\[
+\boxed{
+\vct K_e^{\bar F}
+=\vct K_{\rm mat}^{\bar F}
++\vct K_{\rm geo}^{\bar F}
++\vct K_{\rm proj}^{\bar F}}
+\]
+together with $\vct f^{e,\mathrm{int}}$, the eight trial Gauss-point states.
+\end{enumerate}
+\end{algorithmbox}
+
+\paragraph*{Equivalent direct-$D\Pstress/D\F$ implementation.}
+For debugging, or as an alternative production kernel, steps 3(e)--3(g) may be replaced exactly by Eqs.~\eqref{eq:fbar-residual-reference} and \eqref{eq:fbar-K-reference}. The two implementations must agree to numerical precision. This gives a strong element-level test of the spatial Truesdell conversion, the geometric term, and the $\bar F$ projection correction simultaneously.
+
+\begin{algorithmbox}{Final element kernel -- standard Hex8 control}
+The standard Hex8 uses the ordinary Truesdell algorithm of Section~\ref{sec:algo-T} with $n_e=8$ and $n_g=8$. At every Gauss point set $\F^{\rm mat}=\F$, call the same constitutive update, assemble
+\[
+\vct f^{e,\mathrm{int}}=\sum_g\vct B_g^\top\vct s_g\omega_g^x,
+\qquad
+\vct K_e=\sum_g\vct B_g^\top\vct D_g^{\mathrm{T,alg}}\vct B_g\omega_g^x+\vct K_{\rm geo},
+\]
+and store only trial material states until global convergence. There is no centroid evaluation, $\alpha_g=1$, $\overline{\vct B}=\vct B$, and $\vct K_{\rm proj}=\vct0$.
+\end{algorithmbox}
+
+
+\section{Global nonlinear solution algorithm}
+\label{sec:final-global-algorithm}
+
+The element algorithms provide the local residual, tangent, and trial constitutive state. The global procedure below states the mathematical solution sequence without prescribing mesh-file, programming-language, or storage details.
+
+\begin{algorithmbox}{Global constrained Newton algorithm}
+\textbf{Committed input at $t_n$:} $\vct u_n$, $\vct\lambda_n$, committed Gauss-point states $\mathcal H_n$, admissible next pseudo-time $t_{n+1}$, external loading at $t_{n+1}$, and the affine constraint data $\vct C\vct u=\vct d(t_{n+1})$.
+
+\begin{enumerate}[leftmargin=1.7em,label=\arabic*.,itemsep=0.18em,topsep=0.2em]
+\item Initialize a trial pair $\vct u_{n+1}^{(0)},\vct\lambda_{n+1}^{(0)}$ from the committed state or a predictor. Keep every component of $\mathcal H_n$ immutable.
+\item For Newton iteration $i=0,1,\ldots,N_{\max}-1$:
+  \begin{enumerate}[leftmargin=1.5em,label=\alph*.,itemsep=0.12em,topsep=0.1em]
+  \item For every element, gather $\vct u_n^e$ and $\vct u_{n+1}^{e,(i)}$. Reconstruct $\F_n$ and $\F_{n+1}^{(i)}$ from nodal kinematics at each integration point and evaluate the appropriate standard or Hex8-$\bar F$ element algorithm from the same committed material state $\mathcal H_n^e$.
+  \item Assemble
+  \begin{equation*}
+  \vct f^{\mathrm{int},(i)}=\sum_e\mathcal A_e\vct f^{e,\mathrm{int},(i)},
+  \qquad
+  \vct K^{(i)}=\sum_e\mathcal A_e\vct K_e^{(i)}\mathcal A_e^\top,
+  \end{equation*}
+  where $\mathcal A_e$ denotes the Boolean element-to-global assembly operator.
+  \item Form the augmented residual
+  \begin{equation*}
+  \vct r_u^{(i)}=\vct f^{\mathrm{int},(i)}-\vct f^{\mathrm{ext}}(t_{n+1})+\vct C^\top\vct\lambda_{n+1}^{(i)},
+  \qquad
+  \vct r_c^{(i)}=\vct C\vct u_{n+1}^{(i)}-\vct d(t_{n+1}).
+  \end{equation*}
+  \item If equilibrium and constraint tolerances are satisfied, accept the trial state and proceed to Step~3.
+  \item Otherwise solve
+  \begin{equation*}
+  \begin{bmatrix}
+  \vct K^{(i)} & \vct C^\top\\
+  \vct C & \vct0
+  \end{bmatrix}
+  \begin{bmatrix}
+  \Delta\vct u^{(i)}\\
+  \Delta\vct\lambda^{(i)}
+  \end{bmatrix}
+  =-
+  \begin{bmatrix}
+  \vct r_u^{(i)}\\
+  \vct r_c^{(i)}
+  \end{bmatrix}.
+  \end{equation*}
+  For exact Newton, refresh $\vct K^{(i)}$ every iteration. For modified Newton, a previously formed tangent may be retained while stresses, residuals, and trial constitutive states are still reevaluated at every new $\vct u_{n+1}^{(i)}$.
+  \item Update $\vct u_{n+1}^{(i+1)}=\vct u_{n+1}^{(i)}+\Delta\vct u^{(i)}$ and $\vct\lambda_{n+1}^{(i+1)}=\vct\lambda_{n+1}^{(i)}+\Delta\vct\lambda^{(i)}$.
+  \end{enumerate}
+\item On convergence, atomically commit $\vct u_{n+1}$, $\vct\lambda_{n+1}$, and the trial Gauss-point states returned by the converged element evaluations. On recoverable failure or nonconvergence, discard the entire trial endpoint and repeat the same $n\rightarrow n+1$ advance with a smaller pseudo-time increment from the unchanged committed state.
+\end{enumerate}
+\end{algorithmbox}
+
+\appendix
+\section{Additional tangent remarks and crystal-plasticity differentiation}
+\label{app:tangent-notes}
+\subsection{Increment notation versus endpoint notation}
+
+A solver-specific constitutive Jacobian is often written symbolically as
+\begin{equation}
+\frac{\partial\Delta\text{stress}}
+{\partial\Delta\text{strain}}.
+\end{equation}
+During a global Newton perturbation the beginning-of-increment state is fixed. Therefore
+\begin{equation}
+\delta(\Delta\text{stress})=\delta(\text{stress}_{n+1}),
+\qquad
+\delta(\Delta\text{strain})=\delta(\text{strain}_{n+1}).
+\end{equation}
+The word ``increment'' does not imply that history sensitivity is neglected. It specifies the discrete map whose endpoint is being differentiated.
+
+
+\subsection{Numerical differentiation of a crystal-plasticity update}
+
+Suppose $\bs z$ collects the local constitutive unknowns solved inside one material-point update, and the update is defined implicitly by
+\begin{equation}
+\bs{r}\left(\bs z_{n+1},\F_{n+1};\bs z_n,\F_n,\Delta t\right)=\bs{0},
+\end{equation}
+and $\Pstress_{n+1}=\widehat{\Pstress}(\F_{n+1},\bs z_{n+1};\F_n,\bs z_n,\Delta t)$. The consistent algorithmic derivative is
+\begin{equation}
+\frac{D\Pstress_{n+1}}{D\F_{n+1}}
+=
+\frac{\partial\widehat{\Pstress}}{\partial\F_{n+1}}
++
+\frac{\partial\widehat{\Pstress}}{\partial\bs z_{n+1}}
+:
+\frac{D\bs z_{n+1}}{D\F_{n+1}}.
+\label{eq:alg-total-derivative}
+\end{equation}
+Thus, a finite-difference evaluation of $D\Pstress/D\F$ is consistent only if each perturbed $\F_{n+1}$ is passed through the complete local constitutive solve from the same committed state at $t_n$. Holding the converged internal variables fixed would instead produce a frozen-state derivative.
+
+For active-set plasticity or crystal plasticity, keeping the currently active slip set fixed while resolving the local return-mapping equations gives the tangent of that smooth active-set branch. At an activation or deactivation boundary the constitutive map is generally nonsmooth; a unique classical derivative need not exist. This is not an error in the finite element formulation. It is a property of the local constitutive map.
+
+A perturbation magnitude such as $10^{-8}$ may be suitable when components of $\F$ are of order unity and double precision is used, but the perturbation should eventually be checked for truncation and cancellation sensitivity. A scale-aware perturbation and a central-difference verification are useful implementation tests.
+
+
+\section{Reference-form cross-check of the spatial linearization}
+\label{app:reference-crosscheck}
+
+The same internal virtual work can be pulled back to the fixed reference configuration,
+\begin{equation}
+G^{\mathrm{int}}
+=
+\int_{\Omega_0}
+\Pstress:\Grad_X\bs{v}\,\dd V.
+\label{eq:weak-reference-crosscheck}
+\end{equation}
+Because $\Grad_X\bs{v}$ and $\dd V$ are fixed during the directional derivative with respect to the current nodal configuration,
+\begin{equation}
+\boxed{
+DG^{\mathrm{int}}[\Delta\bs{u}]
+=
+\int_{\Omega_0}
+\Grad_X\bs{v}:\Aalg:\Grad_X\Delta\bs{u}\,\dd V
+}.
+\label{eq:DG-reference-Aalg}
+\end{equation}
+Using
+\begin{equation}
+\Grad_X\bs{v}=\bs G_v\F,
+\qquad
+\Grad_X\Delta\bs{u}=\bs{h}\F,
+\qquad
+\dd V=\frac{1}{J}\dd v,
+\end{equation}
+Eq.~\eqref{eq:DG-reference-Aalg} becomes
+\begin{equation}
+DG^{\mathrm{int}}[\Delta\bs{u}]
+=
+\int_{\Omega_t}
+\frac{1}{J}
+(\bs G_v\F):\Aalg:(\bs{h}\F)\,\dd v.
+\label{eq:DG-reference-pushed}
+\end{equation}
+Substitution of the push-forward relation of Section~\ref{sec:pushforward} reduces Eq.~\eqref{eq:DG-reference-pushed} exactly to Eq.~\eqref{eq:DG-Truesdell}. This identity is a useful independent audit of the spatial derivation. It also clarifies the status of the geometric stiffness: when the endpoint constitutive derivative is kept in the material pair $(\Pstress,\F)$ on $\Omega_0$, the same total directional derivative is represented by the single $\Aalg$ term. After rewriting that derivative in current-configuration variables, it separates naturally into a spatial constitutive contribution and the conventional initial-stress/geometric contribution.
+
+\section{Near-incompressibility and element-technology alternatives}
+\label{app:locking}
+
+Plastic incompressibility does not by itself imply total incompressibility. In a multiplicative crystal-plasticity split
+\begin{equation}
+\F=\Fe\Fp,
+\end{equation}
+isochoric plastic flow gives
+\begin{equation}
+\det\Fp=1,
+\end{equation}
+and therefore
+\begin{equation}
+J=\det\F=\det\Fe.
+\end{equation}
+A material may therefore have isochoric plastic flow while retaining finite elastic compressibility. Nevertheless, once plastic flow dominates the incremental response, a displacement formulation can behave numerically as a nearly incompressible problem. Fully integrated displacement elements can develop volumetric locking as the constitutive response approaches near-incompressibility; this must be assessed for the intended elastic-plastic parameter range.
+
+The unstabilized reference formulations in this document are standard displacement-only Hex8 with full $2^3$ integration and standard displacement-only Hex20 with full $3^3$ integration. The selected anti-locking option is the separate centroidal $\bar F$ Hex8 formulation. This keeps the constitutive tangent representation independent of stabilization for the two standard elements; locking must therefore be tested rather than assumed absent.
+
+\subsection{How the main remedies alter the present formulation}
+
+{\small
+\setlength{\tabcolsep}{4pt}
+\begin{longtable}{>{\raggedright\arraybackslash}p{2.5cm} >{\raggedright\arraybackslash}p{3.8cm} >{\raggedright\arraybackslash}p{2.8cm} >{\raggedright\arraybackslash}p{4.4cm}}
+\toprule
+Method & Change relative to the present element & New global unknowns & Main consequence for this formulation \\
+\midrule
+\endfirsthead
+\toprule
+Method & Change relative to the present element & New global unknowns & Main consequence for this formulation \\
+\midrule
+\endhead
+Uniform reduced integration & Replace $3^3$ quadrature by a lower-order rule; constitutive map and weak form are otherwise unchanged. & None & Smallest code and derivation change, but under-integration can introduce zero-energy modes. For Hex20 it is a small formal change, but under-integration can still introduce zero-energy modes and is therefore not selected in the present implementation scope. \\
+\addlinespace
+Selective reduced integration & Integrate volumetric and deviatoric contributions with different rules. & None & Requires a defensible volumetric/deviatoric split of the residual and tangent. This is less neutral for a generic anisotropic crystal-plasticity material interface. \\
+\addlinespace
+$\bar B$ / projection & Replace the compatible dilatational strain or virtual-strain operator by a projected/averaged field. & None & Keeps a displacement-only global system, but changes the strain-displacement operator and its consistent linearization. The finite-strain extension is more involved than changing quadrature. \\
+\addlinespace
+$\bar F$ / projection & Replace the compatible $\F$ supplied to the constitutive response by a modified deformation gradient whose volumetric part is projected to a lower-order space. & None & Particularly natural for the present $\Pstress(\F)$ and $D\Pstress/D\F$ material interface. Stress, internal force, and tangent must all use the modified kinematics consistently. \\
+\addlinespace
+Mixed $u$--$p$ or $u$--$p$--$J$ & Add independently interpolated pressure and possibly volume/Jacobian fields and their weak equations. & Yes, unless local fields are statically condensed & Largest change: new variational equations, interpolation/stability choices, block element matrices, assembly, constraints, and linear-solver considerations. It is the most direct path toward the truly incompressible limit. \\
+\bottomrule
+\end{longtable}
+}
+
+For the present project, the classical centroidal $\bar F$ Hex8 of Section~\ref{sec:fbar-hex8} is now the selected displacement-only anti-locking element. It preserves full $2\times2\times2$ integration, introduces no new global unknowns, and preserves the native material interface based on two deformation gradients and $D\Pstress/D\F$. Standard Hex8 remains available as the unstabilized control element.
+
+
+
+A mixed formulation remains the cleaner choice if the intended material approaches exact incompressibility, if pressure itself is an important solution quantity, or if a projection formulation proves insufficiently robust. It should be regarded as a new element family rather than a small option inside the present element kernel.
+
+\subsection{Published and public implementation references}
+
+Several public implementations are useful as design references without being copied directly. MOOSE implements finite-deformation $\bar F$ stabilization in both total- and updated-Lagrangian kernels and emphasizes that changing the deformation gradient also changes the consistent Jacobian. OpenGeoSys documents and implements an $\bar F$ large-deformation process with both element-center and element-average volumetric measures and publishes the corresponding linearization. The deal.II step-44 tutorial provides a complete three-field finite-strain quasi-incompressible solver with displacement, pressure, and independent volume/Jacobian fields. These implementations illustrate the relative software impact of projection and mixed approaches.
+
+The standard and $\bar F$ Hex8 elements should be compared over the intended elastic bulk modulus, plastic strain range, mesh refinement, and element distortion before the projection is trusted for crystal plasticity. Pressure oscillation/checkerboarding, excessive stiffness, and convergence behavior should be monitored together rather than judging locking from displacement alone. Standard Hex20 provides an additional higher-order reference but is not assumed to be locking-free.
+
+\section{Hexahedral shape functions and local-node conventions}
+\label{app:shape-functions}
+\subsection{Hex8}
+
+Let the eight corner nodes have parent-coordinate signs
+\begin{equation}
+(\xi_A,\eta_A,\zeta_A)\in\{-1,+1\}^3.
+\end{equation}
+The tri-linear Hex8 shape functions are
+\begin{equation}
+\boxed{
+N_A(\xi,\eta,\zeta)
+=\frac18
+(1+\xi\xi_A)
+(1+\eta\eta_A)
+(1+\zeta\zeta_A).
+}
+\label{eq:hex8-shape}
+\end{equation}
+Their parent derivatives are
+\begin{align}
+N_{A,\xi}&=\frac18\xi_A(1+\eta\eta_A)(1+\zeta\zeta_A),\\
+N_{A,\eta}&=\frac18\eta_A(1+\xi\xi_A)(1+\zeta\zeta_A),\\
+N_{A,\zeta}&=\frac18\zeta_A(1+\xi\xi_A)(1+\eta\eta_A).
+\end{align}
+For the centroidal $\bar F$ element these same shape functions are evaluated at the eight Gauss points and once at $\bs\xi_c=(0,0,0)^\top$ for the projection kinematics. No separate centroid shape functions or internal degrees of freedom are introduced.
+
+\subsection{Hex20}
+
+Let corner-node signs be
+\begin{equation}
+(\xi_A,\eta_A,\zeta_A)\in\{-1,+1\}^3.
+\end{equation}
+For each of the eight corner nodes,
+\begin{equation}
+\boxed{
+N_A(\xi,\eta,\zeta)
+=\frac{1}{8}
+(1+\xi\xi_A)
+(1+\eta\eta_A)
+(1+\zeta\zeta_A)
+(\xi\xi_A+\eta\eta_A+\zeta\zeta_A-2).
+}
+\label{eq:hex20-corner}
+\end{equation}
+
+For an edge midpoint on an edge parallel to the $\xi$ direction, with fixed $\eta_A,\zeta_A\in\{-1,+1\}$,
+\begin{equation}
+\boxed{
+N_A
+=\frac{1}{4}(1-\xi^2)(1+\eta\eta_A)(1+\zeta\zeta_A).
+}
+\label{eq:hex20-xedge}
+\end{equation}
+For an edge parallel to $\eta$,
+\begin{equation}
+\boxed{
+N_A
+=\frac{1}{4}(1-\eta^2)(1+\xi\xi_A)(1+\zeta\zeta_A).
+}
+\label{eq:hex20-yedge}
+\end{equation}
+For an edge parallel to $\zeta$,
+\begin{equation}
+\boxed{
+N_A
+=\frac{1}{4}(1-\zeta^2)(1+\xi\xi_A)(1+\eta\eta_A).
+}
+\label{eq:hex20-zedge}
+\end{equation}
+These expressions define all 20 serendipity shape functions. Their parent-coordinate derivatives are obtained analytically from Eqs.~\eqref{eq:hex20-corner}--\eqref{eq:hex20-zedge}.
+
+A concrete node numbering is not part of the continuum formulation, but any implementation must use one ordering consistently in interpolation, connectivity, face definitions, and constraint generation.
+
+\section{Guide to variations and consistent linearization}
+\label{app:variations}
+
+This appendix is a reading guide for the variational steps used in Part~II. Its purpose is not to introduce a second formulation, but to make explicit which quantities depend on the nonlinear displacement field and which are held fixed during a directional derivative.
+
+\subsection{Variation as a directional derivative}
+For a functional $Q(\bs u)$, the variation in direction $\Delta\bs u$ is
+\begin{equation}
+\delta Q
+\equiv
+DQ(\bs u)[\Delta\bs u]
+=
+\left.\frac{\dd}{\dd\epsilon}
+Q(\bs u+\epsilon\Delta\bs u)\right|_{\epsilon=0}.
+\end{equation}
+The operator is linear and obeys the ordinary product and chain rules. What matters is the dependency graph. A factor that does not depend on $\bs u$ has zero variation.
+
+\subsection{Product rule and dependency bookkeeping}
+Consider a product $A(\bs u)B(\bs u)$. If both factors depend on the perturbed displacement field, then
+\begin{equation}
+\delta(AB)=(\delta A)B+A(\delta B).
+\end{equation}
+If instead $B=B_0$ is fixed with respect to the chosen perturbation,
+\begin{equation}
+\delta\bigl(A(\bs u)B_0\bigr)=(\delta A)B_0,
+\qquad
+\delta B_0=0.
+\end{equation}
+Nothing has happened to the Leibniz rule; one of its two terms is simply zero. The main task in a nonlinear FE linearization is therefore to identify the dependency of every factor before applying the variation.
+
+For example, in the reference-form internal work
+\begin{equation}
+G^{\mathrm{int}}=\int_{\Omega_0}\bs P:\Grad_X\bs v\,\dd V,
+\end{equation}
+$\bs P$ depends on the current trial endpoint, whereas $\Grad_X\bs v$ and $\dd V$ are fixed because they are referred to $\Omega_0$ and the test coefficients are held fixed. Hence only $\bs P$ contributes a nonzero variation. In the spatial form, by contrast, $\bs\sigma$, $\nabla_x\bs v$, and $\dd v$ all depend on the current map and all three product-rule contributions must initially be retained; some later cancel after the Truesdell relation is substituted.
+
+\subsection{Test field versus Newton direction}
+Let $\mathcal V_0$ denote the admissible test space satisfying the homogeneous form of the essential displacement conditions. The weak residual is tested with $\bs v\in\mathcal V_0$,
+\begin{equation}
+G(\bs u,\bs v)=0
+\qquad\forall\,\bs v\in\mathcal V_0.
+\end{equation}
+while Newton requires
+\begin{equation}
+DG(\bs u,\bs v)[\Delta\bs u].
+\end{equation}
+During this derivative, $\Delta\bs u$ is the perturbation direction and the nodal coefficients of $\bs v$ are fixed. Thus there is no term representing a variation of those coefficients. Nevertheless, spatial derivatives of $\bs v$ can vary because the operator $\nabla_x$ depends on the current map.
+
+\subsection{Basic kinematic identities}
+Let
+\begin{equation}
+\bs h=\delta\F\F^{-1}.
+\end{equation}
+Then
+\begin{align}
+\delta J &= J\tr(\bs h),\\
+\delta(\F^{-1}) &= -\F^{-1}(\delta\F)\F^{-1},\\
+\delta(\F^{-\top}) &= -\F^{-\top}(\delta\F)^\top\F^{-\top}.
+\end{align}
+These are direct applications of the chain rule to $J(\F)$ and $\F^{-1}\F=\I$.
+
+\subsection{Why the spatial test-function gradient varies}
+Using $\nabla_x\bs v=(\Grad_X\bs v)\F^{-1}$ and holding $\Grad_X\bs v$ fixed,
+\begin{align}
+\delta(\nabla_x\bs v)
+&=(\Grad_X\bs v)\,\delta(\F^{-1})\\
+&=-(\Grad_X\bs v)\F^{-1}(\delta\F)\F^{-1}\\
+&=-(\nabla_x\bs v)\bs h.
+\end{align}
+Only the inverse deformation gradient is varied because the reference-gradient representation of the fixed test field does not depend on the current trial displacement.
+
+\subsection{Variation of the current volume element}
+Because $\dd v=J\,\dd V$ and $\dd V$ belongs to the fixed reference configuration,
+\begin{equation}
+\delta(\dd v)=\delta J\,\dd V=\tr(\bs h)\,\dd v.
+\end{equation}
+Again, only $J$ varies; $\dd V$ does not.
+
+\subsection{Example: internal virtual work}
+For
+\begin{equation}
+G^{\mathrm{int}}=\int_{\Omega_t}\bs\sigma:\nabla_x\bs v\,\dd v,
+\end{equation}
+all three displayed factors have different dependency status during Newton linearization: $\bs\sigma$ depends on the trial kinematics through the constitutive update; $\nabla_x\bs v$ depends on the current map even though the test coefficients are fixed; and $\dd v$ depends on $J$. Therefore
+\begin{equation}
+\delta G^{\mathrm{int}}
+=
+\int_{\Omega_t}
+\left[
+\delta\bs\sigma:\nabla_x\bs v
++\bs\sigma:\delta(\nabla_x\bs v)
++\bs\sigma:\nabla_x\bs v\,\tr(\bs h)
+\right]\dd v.
+\end{equation}
+Substitution of the preceding identities gives the expression used in Section~\ref{sec:linearization}.
+
+\subsection{Constitutive variables are varied implicitly through the algorithmic tangent}
+For a history-dependent material, the endpoint stress has the condensed form
+\begin{equation}
+\bs P_{n+1}=\widehat{\bs P}(\bs F_{n+1};\bs F_n,\mathcal H_n,\Delta t),
+\end{equation}
+where the local integration algorithm has already solved for trial internal variables. The global FE linearization therefore uses
+\begin{equation}
+\delta\bs P_{n+1}=\mathbb A^{\mathrm{alg}}:\delta\bs F_{n+1}.
+\end{equation}
+One does not add a second explicit $\partial\bs P/\partial\mathcal H\,\delta\mathcal H$ term at global level if $\mathbb A^{\mathrm{alg}}$ is the derivative of the complete condensed local update; that dependency is already contained in $\mathbb A^{\mathrm{alg}}$.
+
+\subsection{Reference-form linearization as a useful check}
+The pull-back
+\begin{equation}
+G^{\mathrm{int}}=\int_{\Omega_0}\bs P:\Grad_X\bs v\,\dd V
+\end{equation}
+is especially transparent: $\Grad_X\bs v$ and $\dd V$ are fixed, so
+\begin{equation}
+\delta G^{\mathrm{int}}
+=
+\int_{\Omega_0}
+\Grad_X\bs v:\mathbb A^{\mathrm{alg}}:\Grad_X\Delta\bs u\,\dd V.
+\end{equation}
+When this expression is pushed forward to the current configuration, the same material and geometric tangent terms obtained in Part~II must reappear. This equivalence is a strong algebraic and implementation check.
+
+\section{References}
+
+The principal formulation/notation reference is T. Belytschko, W. K. Liu, B. Moran, and K. Elkhodary, \emph{Nonlinear Finite Elements for Continua and Structures}, 2nd ed., Wiley, 2014.
+
+For volume-constraint projection and nearly incompressible finite deformation, useful references include J. C. Simo, R. L. Taylor, and K. S. Pister, ``Variational and projection methods for the volume constraint in finite deformation elasto-plasticity,'' \emph{Computer Methods in Applied Mechanics and Engineering}, 51, 177--208 (1985); E. A. de Souza Neto, D. Peri\'{c}, M. Dutko, and D. R. J. Owen, ``Design of simple low order finite elements for large strain analysis of nearly incompressible solids,'' \emph{International Journal of Solids and Structures}, 33, 3277--3296 (1996); and T. Elguedj, Y. Bazilevs, V. M. Calo, and T. J. R. Hughes, ``$\bar B$ and $\bar F$ projection methods for nearly incompressible linear and nonlinear elasticity and plasticity using higher-order NURBS elements,'' \emph{Computer Methods in Applied Mechanics and Engineering}, 197, 2732--2762 (2008).
+
+
+\end{document}

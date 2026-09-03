@@ -1,0 +1,83 @@
+[analysis]
+name = "case_a_hex8"
+t_start = 0.0
+t_end = 1.0
+
+[mesh]
+file = "elongated_hex8.msh"
+format = "gmsh_msh41"
+
+[time]
+dt_initial = 0.10
+dt_min = 1.0e-5
+dt_max = 0.20
+cutback_factor = 0.5
+growth_factor = 1.5
+grow_if_newton_iterations_le = 4
+max_attempts_per_increment = 12
+
+[nonlinear]
+method = "newton"
+max_iterations = 20
+force_rtol = 1.0e-8
+force_atol = 1.0e-10
+constraint_rtol = 1.0e-10
+constraint_atol = 1.0e-12
+check_displacement_increment = true
+displacement_rtol = 1.0e-10
+displacement_atol = 1.0e-12
+
+[linear_solver]
+backend = "scipy_splu"
+ordering = "COLAMD"
+singular_policy = "diagnose_and_abort"
+
+[[curves]]
+name = "ramp"
+points = [[0.0, 0.0], [1.0, 1.0]]
+
+[[materials]]
+name = "matrix"
+model = "neo_hookean"
+[materials.parameters]
+mu = 1.0
+kappa = 20.0
+
+[[element_assignments]]
+region = "solid"
+formulation = "hex8"
+material = "matrix"
+
+[output]
+directory = "results/case_a_hex8"
+interval = 0.05
+explicit_times = [0.5, 1.0]
+write_vtu = true
+write_gauss_fields = ["F_raw", "J_raw", "F_material", "J_material", "cauchy_stress", "P_material", "P_effective"]
+write_newton_history = true
+
+[restart]
+enabled = true
+interval = 0.25
+explicit_times = [0.5, 1.0]
+keep_last = 2
+restart_from = ""
+
+[[constraints.prescribed]]
+name = "clamp_xmin"
+region = "xmin"
+components = ["x", "y", "z"]
+value = {constant = 0.0}
+
+[[constraints.prescribed]]
+name = "extend_xmax"
+region = "xmax"
+components = ["x"]
+value = {curve = "ramp", scale = 0.4}
+
+[verification]
+require_positive_J = true
+check_global_force_balance = true
+check_element_directional_tangent = true
+check_global_directional_tangent = true
+restart_equivalence_time = 0.5
