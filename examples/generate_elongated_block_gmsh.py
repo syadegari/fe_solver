@@ -11,7 +11,7 @@ import argparse
 import gmsh
 
 
-def near(a: float, b: float, tol: float = 1.0e-9) -> bool:
+def near(a: float, b: float, tol: float = 1.0e-6) -> bool:
     return abs(a - b) <= tol * max(1.0, abs(a), abs(b))
 
 

@@ -9,7 +9,7 @@ import argparse
 import gmsh
 
 
-def near(a: float, b: float, tol: float = 1.0e-9) -> bool:
+def near(a: float, b: float, tol: float = 1.0e-6) -> bool:
     return abs(a - b) <= tol * max(1.0, abs(a), abs(b))
 
 
@@ -133,10 +133,6 @@ def main() -> None:
             gmsh.model.mesh.setRecombine(2, tag)
         gmsh.model.mesh.setTransfiniteVolume(vol)
 
-        gmsh.model.mesh.setPeriodic(2, [faces["xmax"]], [faces["xmin"]], translation(L, 0.0, 0.0))
-        gmsh.model.mesh.setPeriodic(2, [faces["ymax"]], [faces["ymin"]], translation(0.0, L, 0.0))
-        gmsh.model.mesh.setPeriodic(2, [faces["zmax"]], [faces["zmin"]], translation(0.0, 0.0, L))
-
         add_physical(3, [vol], "solid")
         for name, tag in faces.items():
             add_physical(2, [tag], name)
@@ -144,6 +140,12 @@ def main() -> None:
 
         gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
         gmsh.model.mesh.generate(3)
+        # Build the correspondence from the completed structured meshes.  Setting
+        # all three surface relations before meshing can make Gmsh recursively
+        # assign incompatible edge masters at cube corners.
+        gmsh.model.mesh.setPeriodic(2, [faces["xmax"]], [faces["xmin"]], translation(L, 0.0, 0.0))
+        gmsh.model.mesh.setPeriodic(2, [faces["ymax"]], [faces["ymin"]], translation(0.0, L, 0.0))
+        gmsh.model.mesh.setPeriodic(2, [faces["zmax"]], [faces["zmin"]], translation(0.0, 0.0, L))
         validate_mesh(vol, faces, args.n, L)
         gmsh.write(args.out)
     finally:

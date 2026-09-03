@@ -82,10 +82,10 @@ u_trial:    float64 [3*n_node]   # current Newton trial
 
 Current coordinates are derived:
 
-\[
+$$
 \boldsymbol x_{A,n}=\boldsymbol X_A+\boldsymbol u_{A,n},\qquad
 \boldsymbol x_{A,n+1}^{(i)}=\boldsymbol X_A+\boldsymbol u_{A,n+1}^{(i)}.
-\]
+$$
 
 ### 4.2 Deformation gradients are not history variables
 
@@ -194,7 +194,7 @@ This model is required before any stateful plasticity model.
 
 Use
 
-\[
+$$
 W(\boldsymbol F)
 =\frac{\mu}{2}\bigl(\operatorname{tr}\boldsymbol C-3\bigr)
 -\mu\ln J
@@ -202,28 +202,28 @@ W(\boldsymbol F)
 \qquad
 \boldsymbol C=\boldsymbol F^\top\boldsymbol F,
 \qquad J=\det\boldsymbol F>0.
-\]
+$$
 
 Return
 
-\[
+$$
 \boxed{
 \boldsymbol P
 =\mu\left(\boldsymbol F-\boldsymbol F^{-\top}\right)
 +\kappa\ln J\,\boldsymbol F^{-\top}
 }
-\]
+$$
 
 and
 
-\[
+$$
 \boxed{
 A^{\mathrm{alg}}_{iI jJ}
 =\mu\,\delta_{ij}\delta_{IJ}
 +\kappa(F^{-\top})_{iI}(F^{-\top})_{jJ}
 +(\mu-\kappa\ln J)(F^{-\top})_{iJ}(F^{-\top})_{jI}.
 }
-\]
+$$
 
 There is no material state: `n_state = 0`.
 
@@ -273,12 +273,12 @@ For v1, accept only translational periodic maps between opposite RVE boundaries.
 
 The mechanics relation for a retained pair is
 
-\[
+$$
 \boldsymbol u^+ - \boldsymbol u^-
 =
 (\overline{\boldsymbol F}-\boldsymbol I)
 (\boldsymbol X^+-\boldsymbol X^-).
-\]
+$$
 
 A general rotational/affine Gmsh periodic transformation is outside v1 and must be rejected with a clear diagnostic.
 
@@ -314,31 +314,31 @@ The exact shape functions are in the formulation reference appendix. Unit tests 
 
 For an element and parent point `xi`, construct
 
-\[
+$$
 \mathbf J_0=\frac{\partial\boldsymbol X}{\partial\boldsymbol\xi},
 \qquad
 \mathbf J_{x,n}=\frac{\partial\boldsymbol x_n}{\partial\boldsymbol\xi},
 \qquad
 \mathbf J_{x,n+1}^{(i)}=\frac{\partial\boldsymbol x_{n+1}^{(i)}}{\partial\boldsymbol\xi}.
-\]
+$$
 
 With column gradients,
 
-\[
+$$
 \nabla_X N_A=\mathbf J_0^{-\top}\nabla_\xi N_A,
 \qquad
 \nabla_x N_A=(\mathbf J_{x,n+1}^{(i)})^{-\top}\nabla_\xi N_A.
-\]
+$$
 
 Reconstruct endpoint deformation gradients:
 
-\[
+$$
 \boxed{
 \boldsymbol F_n=\mathbf J_{x,n}\mathbf J_0^{-1},
 \qquad
 \boldsymbol F_{n+1}^{(i)}=\mathbf J_{x,n+1}^{(i)}\mathbf J_0^{-1}.
 }
-\]
+$$
 
 All spatial gradients, current quadrature volumes, Cauchy stresses, and spatial tangents used in the current residual/Jacobian belong to the **current Newton trial configuration** `Omega_{n+1}^{(i)}`.
 
@@ -382,49 +382,49 @@ For every Gauss point:
 2. Validate reference and trial geometry according to Section 18.
 3. Call `evaluate_material_point` with raw `F_n` and raw `F_np1`.
 4. Convert the returned `P` to Cauchy stress:
-   \[
+   $$
    \boldsymbol\sigma=J^{-1}\boldsymbol P\boldsymbol F^\top.
-   \]
+   $$
 5. If a tangent is requested, transform `A_alg = dP/dF` to the Truesdell spatial tangent using formulation labels `eq:a-pushforward` and `eq:cT-from-A`:
-   \[
+   $$
    a^{\mathrm{pf}}_{ij km}
    =\frac1J A^{\mathrm{alg}}_{iI kK}F_{jI}F_{mK},
-   \]
-   \[
+   $$
+   $$
    c^{\mathrm{T,alg}}_{ij km}
    =\frac12\left[
    a^{\mathrm{pf}}_{ij km}+a^{\mathrm{pf}}_{ij mk}
    -\delta_{ik}\sigma_{mj}-\delta_{im}\sigma_{kj}
    \right].
-   \]
+   $$
 6. Build the ordinary 6-by-`3*n_e` engineering-shear `B` matrix from current gradients. Use exactly the Voigt convention in formulation label `eq:voigt-explicit`.
 7. Current quadrature volume:
-   \[
+   $$
    \omega_g^x=\det(\mathbf J_{x,n+1}^{(i)})W_g.
-   \]
+   $$
 8. Accumulate
-   \[
+   $$
    \mathbf f^{e,\mathrm{int}} \mathrel{+}=
    \mathbf B_g^\top\boldsymbol\sigma_g^{\mathrm{V}}\omega_g^x,
-   \]
-   \[
+   $$
+   $$
    \mathbf K^{e,\mathrm{mat}} \mathrel{+}=
    \mathbf B_g^\top\mathbf D_g^{\mathrm{T,alg}}\mathbf B_g\omega_g^x,
-   \]
+   $$
    and for node pair `(A,B)`
-   \[
+   $$
    \mathbf K^{e,\mathrm{geo}}_{AB}\mathrel{+}=
    \left[(\nabla_xN_A)^\top\boldsymbol\sigma_g\nabla_xN_B\right]\mathbf I_3\omega_g^x.
-   \]
+   $$
 9. Store the returned state only in the element trial buffer.
 
 Return
 
-\[
+$$
 \boxed{
 \mathbf K^e=\mathbf K^{e,\mathrm{mat}}+\mathbf K^{e,\mathrm{geo}}.
 }
-\]
+$$
 
 Do not assume symmetry and do not store only one triangle.
 
@@ -440,11 +440,11 @@ At both the committed endpoint and current trial endpoint, reconstruct the raw G
 
 For each Gauss point
 
-\[
+$$
 \alpha_g=\left(\frac{J_c}{J_g}\right)^{1/3},
 \qquad
 \overline{\boldsymbol F}_g=\alpha_g\boldsymbol F_g.
-\]
+$$
 
 Do this separately for `n` and `n+1,i`.
 
@@ -461,18 +461,18 @@ The material returns the same `P`, `A_alg`, state, and status fields as any othe
 
 At a Gauss point
 
-\[
+$$
 \overline{\boldsymbol\sigma}_g
 =J_c^{-1}\overline{\boldsymbol P}_g\overline{\boldsymbol F}_g^\top.
-\]
+$$
 
 Use **raw current geometry** to build `B`, `grad_x N`, and the current quadrature weight `omega_x[g] = omega_g^x`. Accumulate
 
-\[
+$$
 \mathbf f^{e,\mathrm{int}}
 \mathrel{+}=
 \mathbf B_g^\top\overline{\boldsymbol\sigma}_g^{\mathrm V}\omega_g^x.
-\]
+$$
 
 ### 11.3 Consistent spatial tangent
 
@@ -480,47 +480,47 @@ Push `Abar` forward with `Fbar` and `J_c` to obtain the material Truesdell tange
 
 For each node `B`, define
 
-\[
+$$
 \boldsymbol q_{B,g}
 =\frac13\left(\nabla_x N_B|_c-\nabla_x N_B|_g\right).
-\]
+$$
 
 For component `k = 0,1,2`, define the projected column of the node block:
 
-\[
+$$
 \overline{\mathbf B}^{\,g}_B[:,k]
 =
 \mathbf B^{\,g}_B[:,k]
 +q_{B,g,k}
 \begin{bmatrix}1&1&1&0&0&0\end{bmatrix}^{\!\top}.
-\]
+$$
 
 This notation is deliberately explicit: `B_B^g` is a 6-by-3 node block; `[:,k]` is programming-array notation used only in this implementation document.
 
 Accumulate
 
-\[
+$$
 \mathbf K^{e,\mathrm{mat}}_{\bar F}
 \mathrel{+}=
 \mathbf B_g^\top
 \overline{\mathbf D}^{\mathrm{T,alg}}_g
 \overline{\mathbf B}_g\,\omega_g^x,
-\]
+$$
 
 ordinary geometric blocks using `sigma_bar`, and
 
-\[
+$$
 \boxed{
 \mathbf K^{e,\mathrm{proj}}_{AB}
 \mathrel{+}=
 -\left(\overline{\boldsymbol\sigma}_g\nabla_x N_A|_g\right)
 \otimes\boldsymbol q_{B,g}\,\omega_g^x.
 }
-\]
+$$
 
 Return
 
-\[
+$$
 \boxed{
 \mathbf K^e_{\bar F}
 =
@@ -528,7 +528,7 @@ Return
 +\mathbf K^{e,\mathrm{geo}}_{\bar F}
 +\mathbf K^{e,\mathrm{proj}}_{\bar F}.
 }
-\]
+$$
 
 A separate test implementation may use the reference-form effective-stress tangent (`eq:fbar-dPeff`, `eq:fbar-K-reference`) and must agree with the spatial form to numerical precision.
 
@@ -580,12 +580,12 @@ The load contributes directly to `f_ext` and has zero tangent.
 
 An optional body force `b0` is defined per reference volume and assembled with reference quadrature:
 
-\[
+$$
 \mathbf f^{e,\mathrm{body}}_A
 =\int_{\Omega_{0e}}N_A\boldsymbol b_0\,\mathrm dV
 \approx\sum_g N_A(\boldsymbol\xi_g)\boldsymbol b_0(\boldsymbol X_g,t)
 \det\mathbf J_{0,g}W_g.
-\]
+$$
 
 It is added to `f_ext` and has zero tangent. The required acceptance cases use `b0 = 0`.
 
@@ -622,9 +622,9 @@ Do not densify the global stiffness except in deliberately tiny unit tests.
 
 Represent all displacement constraints as
 
-\[
+$$
 \boxed{\mathbf C\mathbf u=\mathbf d(t)}
-\]
+$$
 
 with sparse `C`.
 
@@ -650,17 +650,17 @@ Validate that `C` has independent rows for the acceptance cases.
 
 At Newton iteration `i`, form
 
-\[
+$$
 \mathbf r_u
 =\mathbf f^{\mathrm{int}}-\mathbf f^{\mathrm{ext}}
 +\mathbf C^\top\boldsymbol\lambda,
 \qquad
 \mathbf r_c=\mathbf C\mathbf u-\mathbf d.
-\]
+$$
 
 Solve the complete augmented system
 
-\[
+$$
 \boxed{
 \begin{bmatrix}
 \mathbf K & \mathbf C^\top\\
@@ -676,7 +676,7 @@ Solve the complete augmented system
 \mathbf r_c
 \end{bmatrix}.
 }
-\]
+$$
 
 The KKT matrix is expected to be indefinite. Do not treat indefiniteness as singularity.
 
@@ -684,9 +684,9 @@ For full-row-rank `C`, local constrained solvability requires the reduced tangen
 
 Physical constraint reactions are
 
-\[
+$$
 \boxed{\mathbf f_c=-\mathbf C^\top\boldsymbol\lambda.}
-\]
+$$
 
 Individual multiplier values are basis/row-scaling dependent. Do not interpret them as unique physical reactions in isolation.
 
@@ -734,11 +734,11 @@ A new increment attempt must have a valid tangent/factorization before its first
 
 At iteration `i`, always integrate
 
-\[
+$$
 (\boldsymbol F_n,\mathcal H_n)
 \rightarrow
 (\boldsymbol F_{n+1}^{(i)},\widehat{\mathcal H}_{n+1}^{(i)}).
-\]
+$$
 
 Never integrate from trial iteration `i` to trial iteration `i+1`.
 
@@ -750,7 +750,7 @@ On global convergence, commit all Gauss-point trial states atomically. On failur
 
 Use explicit absolute-plus-relative tests. A reference form is
 
-\[
+$$
 \|\mathbf r_u\|_\infty
 \le
 \epsilon_f^{\mathrm{abs}}
@@ -761,11 +761,11 @@ Use explicit absolute-plus-relative tests. A reference form is
 \|\mathbf f^{\mathrm{ext}}\|_\infty,
 \|\mathbf C^\top\boldsymbol\lambda\|_\infty
 \right),
-\]
+$$
 
 and
 
-\[
+$$
 \|\mathbf r_c\|_\infty
 \le
 \epsilon_c^{\mathrm{abs}}
@@ -775,13 +775,13 @@ and
 \|\mathbf C\mathbf u\|_\infty,
 \|\mathbf d\|_\infty
 \right).
-\]
+$$
 
 No dimensionless floor is inserted into either relative scale; the absolute tolerance handles the zero-load/zero-constraint case.
 
 If `check_displacement_increment = true`, also require after the proposed Newton correction
 
-\[
+$$
 \|\Delta\mathbf u\|_\infty
 \le
 \epsilon_u^{\mathrm{abs}}
@@ -791,7 +791,7 @@ If `check_displacement_increment = true`, also require after the proposed Newton
 \|\mathbf u_{n+1}^{(i)}\|_\infty,
 \|\mathbf u_n\|_\infty
 \right).
-\]
+$$
 
 This displacement-correction test is supplementary. It must never replace equilibrium and constraint residual checks.
 
@@ -812,7 +812,7 @@ Use curves for prescribed displacement amplitudes, nodal-force amplitudes, and c
 
 The solver must land exactly, to a scale-aware time tolerance, on
 
-\[
+$$
 \boxed{
 \mathcal T_{\mathrm{event}}
 =
@@ -824,7 +824,7 @@ The solver must land exactly, to a scale-aware time tolerance, on
 \cup
 \{t_{\mathrm{end}}\}.
 }
-\]
+$$
 
 If the user requests output every `0.01`, those times are actual solved equilibrium endpoints. Do not step over them and interpolate afterward while calling the result a solved state.
 
@@ -918,9 +918,9 @@ Minimum top-level responsibilities:
 
 A scalar value expression may contain a constant term, a curve term, or both. When both are present, evaluate
 
-\[
+$$
 q(t)=q_0+s\,c(t).
-\]
+$$
 
 Thus `{constant = 1.0, curve = "ramp", scale = 0.10}` means `1.0 + 0.10*ramp(t)`.
 
@@ -989,9 +989,9 @@ macro_F = [
 
 Each named slave surface must have Gmsh periodic metadata identifying its master. The anchor group must resolve to exactly one reference node for the supplied RVE case. Generate
 
-\[
+$$
 d_{ab}(t)=[\overline{\boldsymbol F}(t)-\boldsymbol I](\boldsymbol X_b-\boldsymbol X_a)
-\]
+$$
 
 for retained periodic edges in the constraint graph.
 
@@ -1048,18 +1048,18 @@ Cold start calls `initialize_material_state`. Restart does not; it loads committ
 5. Homogeneous affine deformation reproduction.
 6. Neo-Hookean analytic `dP/dF` versus centered finite difference.
 7. Standard element directional derivative:
-   \[
+   $$
    \mathbf K^e\Delta\mathbf u
    \approx
    \frac{\mathbf f^{e,\mathrm{int}}(\mathbf u+\epsilon\Delta\mathbf u)-
    \mathbf f^{e,\mathrm{int}}(\mathbf u-\epsilon\Delta\mathbf u)}{2\epsilon}.
-   \]
+   $$
 8. F-bar element directional derivative with the full projection tangent.
 9. Independent F-bar reference-form versus spatial-tangent implementation check.
 10. Homogeneous state: standard Hex8 and Hex8-Fbar residual/stress/state agree. Do **not** require their complete tangent matrices to be identical for arbitrary non-affine perturbations; require agreement of tangent action for homogeneous affine perturbations and require each full tangent to match its own finite-difference residual derivative.
 11. KKT constraint satisfaction and global force balance.
 12. Augmented global directional derivative at fixed pseudo-time. For an arbitrary test direction `(du, dlambda)`, verify
-   \[
+   $$
    \begin{bmatrix}\mathbf K&\mathbf C^\top\\\mathbf C&\mathbf0\end{bmatrix}
    \begin{bmatrix}\Delta\mathbf u\\\Delta\boldsymbol\lambda\end{bmatrix}
    \approx
@@ -1070,16 +1070,16 @@ Cold start calls `initialize_material_state`. Restart does not; it loads committ
    \boldsymbol{\mathcal R}(\mathbf u-\epsilon\Delta\mathbf u,
    \boldsymbol\lambda-\epsilon\Delta\boldsymbol\lambda)
    }{2\epsilon},
-   \]
+   $$
    where
-   \[
+   $$
    \boldsymbol{\mathcal R}(\mathbf u,\boldsymbol\lambda)
    =
    \begin{bmatrix}
    \mathbf f^{\mathrm{int}}(\mathbf u)-\mathbf f^{\mathrm{ext}}+\mathbf C^\top\boldsymbol\lambda\\
    \mathbf C\mathbf u-\mathbf d
    \end{bmatrix}.
-   \]
+   $$
    Keep `C`, `d`, external loading, and pseudo-time fixed during this perturbation.
 13. Restart equivalence.
 14. Cutback/rollback test with deliberately forced recoverable failure.
@@ -1138,10 +1138,10 @@ Use Gmsh translational periodic correspondence for opposite faces and one origin
 
 Prescribe
 
-\[
+$$
 \overline{\boldsymbol F}(t)
 =\boldsymbol I+0.1\,ramp(t)\,\boldsymbol e_1\otimes\boldsymbol e_1.
-\]
+$$
 
 Run separately with:
 
@@ -1150,10 +1150,10 @@ Run separately with:
 
 For homogeneous neo-Hookean material, require the recovered displacement field to satisfy
 
-\[
+$$
 \boldsymbol u(\boldsymbol X,t)
 =[\overline{\boldsymbol F}(t)-\boldsymbol I]\boldsymbol X
-\]
+$$
 
 up to the configured tolerance after the gauge translation is fixed. Every Gauss point should recover the prescribed homogeneous `F` to numerical precision.
 
