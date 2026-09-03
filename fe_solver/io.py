@@ -19,7 +19,7 @@ def model_identity(model: FEModel) -> str:
         digest.update(block.region.encode())
         digest.update(block.formulation.encode())
         digest.update(block.material.name.encode())
-        digest.update(block.material.model.encode())
+        digest.update(block.material.model_root.encode())
         digest.update(block.element_tags.tobytes())
         digest.update(block.connectivity.tobytes())
         digest.update(str(block.state_n.shape).encode())

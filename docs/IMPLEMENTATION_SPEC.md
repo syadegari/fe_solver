@@ -91,16 +91,24 @@ $$
 
 **Invariant:** `F_n`, `F_np1`, raw or projected, are reconstructed from nodal kinematics whenever an element is evaluated. They are not independently advanced Gauss-point state and are not required in a restart file.
 
-### 4.3 Constitutive state
+### 4.3 Constitutive data categories
 
-Each material definition declares a fixed `n_state` before allocation. For each homogeneous element/material block, keep separate committed and trial arrays, for example
+Keep three categories distinct:
+
+- **material properties** are immutable values shared by every point using one named material definition, such as `mu` and `kappa`;
+- **point properties** are immutable but may vary by element or integration point, such as an orientation or a catalog `mat_id`;
+- **material state** contains only evolving, history-dependent integration-point fields.
+
+The registered material model declares its property schema and named state layout once. Individual material definitions provide property values but do not repeat those schemas. An element assignment remains separate and maps a Gmsh region to an element formulation, a material definition, and an optional point-property source.
+
+Each model state layout has a fixed packed size before allocation. For each homogeneous element/material block, keep separate committed and trial arrays, for example
 
 ```text
 state_n:     float64 [n_elem_block, n_gauss, n_state]
 state_trial: float64 [n_elem_block, n_gauss, n_state]
 ```
 
-`n_state = 0` is valid for hyperelasticity.
+`n_state = 0` is valid for hyperelasticity. In that case no material-point initializer is called. The update receives a zero-length state view so its signature remains uniform.
 
 Only accepted global states are committed. A new Newton iteration must never use the previous Newton iteration's trial state as its starting state.
 
@@ -115,8 +123,8 @@ Suggested Python records:
 class MaterialRequest:
     F_n: np.ndarray          # (3, 3)
     F_np1: np.ndarray        # (3, 3), current trial endpoint
-    state_n: np.ndarray      # (n_state,)
-    parameters: object
+    state_n: MaterialStateView
+    properties: object
     point_properties: object | None
     t_n: float
     t_np1: float
@@ -126,7 +134,7 @@ class MaterialRequest:
 class MaterialResponse:
     P: np.ndarray                    # (3, 3)
     A_alg: np.ndarray | None         # (3, 3, 3, 3), dP_np1/dF_np1
-    state_trial: np.ndarray          # (n_state,)
+    state_trial: MaterialStateView
     status: MaterialStatus
 ```
 
@@ -138,37 +146,52 @@ The order shown here is not a tuple order; access fields by name.
 
 ## 5. Material registry and material assignment
 
-### 5.1 Separate model, material definition, and point properties
+### 5.1 Orthogonal model, property, point-data, and assignment layers
 
 Do not encode constitutive meaning in a single integer material ID.
 
-Use structured material definitions, conceptually:
+Use four separate records:
 
 ```python
 @dataclass(frozen=True)
+class MaterialModel:
+    root: str
+    update: Callable
+    initialize: Callable | None
+    validate_properties: Callable
+    state_layout: StateLayout
+
+@dataclass(frozen=True)
 class MaterialDefinition:
     name: str
-    model: str
-    parameters: Mapping[str, Any]
-    state_layout: StateLayout
+    model: MaterialModel
+    properties: Mapping[str, Any]
 ```
 
-An element assignment maps a named Gmsh volume Physical Group to:
+The effective material binding is the combination of:
+
+```text
+registered model x named property set x optional point-property source x element assignment
+```
+
+This is a composition of independent concerns, not a request to enumerate a literal Cartesian product. An element assignment maps a named Gmsh volume Physical Group to:
 
 - element formulation (`hex8`, `hex8_fbar`, `hex20`);
 - material definition name;
 - optional property source.
 
-For crystal plasticity later, one phase/material definition may be shared by many elements while initial orientation is supplied as an element or integration-point property. Do not create one constitutive model definition merely because the orientation differs.
+For crystal plasticity later, one phase/material definition may be shared by many elements while initial orientation is supplied as an element or integration-point property. A `mat_id` may reference an immutable catalog loaded once during preprocessing. Resolve and cache that catalog before element evaluation; material-point updates must not perform repeated file I/O. Record the catalog identity in restart compatibility metadata. Do not create one constitutive model definition merely because the orientation differs.
 
-### 5.2 Solver-native material routine names
+### 5.2 Registered solver-native material routines
 
-Use names distinct from Abaqus terminology. Recommended public interface:
+Each model has an identifier-safe root such as `neo_hook`. Register an update named `update_<root>` and, only when history state requires initialization, an initializer named `init_<root>`. Registration is explicit; do not use dynamic `eval`, implicit module globals, or string-based function execution.
+
+Public interface:
 
 ```python
 @dataclass(frozen=True)
 class MaterialInitRequest:
-    parameters: object
+    properties: object
     point_properties: object | None
     X: np.ndarray              # reference position of material point, shape (3,)
     t0: float
@@ -178,11 +201,11 @@ class MaterialInitResponse:
     state0: np.ndarray         # shape (n_state,)
     status: MaterialStatus
 
-initialize_material_state(MaterialInitRequest) -> MaterialInitResponse
-evaluate_material_point(MaterialRequest) -> MaterialResponse
+init_<root>(MaterialInitRequest) -> MaterialInitResponse       # optional
+update_<root>(MaterialRequest) -> MaterialResponse             # required
 ```
 
-The default cold start is the stress-free reference configuration with `u_0 = 0`, `F_0 = I`, and material state returned by `initialize_material_state`. The initializer may use point properties such as crystal orientation. Initial stress is zero for the required reference neo-Hookean model. A future material that supports nonzero initial stress would require an explicit extension of this contract rather than an implicit solver-side assumption.
+The default cold start is the stress-free reference configuration with `u_0 = 0` and `F_0 = I`. For a history-dependent model, state is returned by its registered initializer, which may use point properties. A nonempty state layout without an initializer is a setup error. For a state-free model such as `neo_hook`, skip integration-point initialization entirely. Initial stress is zero for the required reference neo-Hookean model. A future material that supports nonzero initial stress requires an explicit extension of this contract rather than an implicit solver-side assumption.
 
 The solver owns stress-measure and tangent transformations. A material returns first Piola-Kirchhoff stress and `dP/dF` only.
 
@@ -931,8 +954,8 @@ Example:
 ```toml
 [[materials]]
 name = "matrix"
-model = "neo_hookean"
-[materials.parameters]
+model = "neo_hook"
+[materials.properties]
 mu = 1.0
 kappa = 20.0
 
@@ -1033,7 +1056,7 @@ mesh/assignment/schema identity needed for compatibility checks
 
 Do **not** store `F_n` as authoritative history. Reconstruct it from reference coordinates and committed `u_n`.
 
-Cold start calls `initialize_material_state`. Restart does not; it loads committed state after compatibility checks.
+Cold start calls the registered initializer only for models with nonempty history state. Restart never initializes material points; it loads committed state after compatibility checks.
 
 ---
 

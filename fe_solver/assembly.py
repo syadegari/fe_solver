@@ -7,7 +7,7 @@ from scipy import sparse
 
 from .config import Deck, component_index, value_expression
 from .elements import evaluate_element
-from .materials import initialize_material_state, material_definition
+from .materials import material_definition
 from .mesh import Mesh
 from .quadrature import HEX20_POINTS, HEX20_WEIGHTS, HEX8_POINTS, HEX8_WEIGHTS
 from .shape import hex20_shape, hex8_shape
@@ -90,16 +90,22 @@ def build_model(deck: Deck, mesh: Mesh) -> FEModel:
             init_shape, init_points = hex8_shape, HEX8_POINTS
         nstate = materials[material_name].state_layout.n_state
         state = np.empty((len(tags), ngauss, nstate))
-        for e, conn in enumerate(connectivity):
-            for g, xi in enumerate(init_points):
-                N, _ = init_shape(xi)
-                init = initialize_material_state(
-                    materials[material_name],
-                    MaterialInitRequest(materials[material_name].parameters, None, N @ mesh.X[conn], t0),
-                )
-                if not init.status.ok:
-                    raise ModelError(init.status.message)
-                state[e, g] = init.state0
+        material = materials[material_name]
+        if nstate:
+            assert material.model.initialize is not None
+            for e, conn in enumerate(connectivity):
+                for g, xi in enumerate(init_points):
+                    N, _ = init_shape(xi)
+                    init = material.model.initialize(
+                        MaterialInitRequest(material.properties, None, N @ mesh.X[conn], t0)
+                    )
+                    if not init.status.ok:
+                        raise ModelError(init.status.message)
+                    if init.state0.shape != (nstate,):
+                        raise ModelError(
+                            f"initializer for {material.model_root!r} returned the wrong state size"
+                        )
+                    state[e, g] = init.state0
         blocks.append(ElementBlock(region, formulation, materials[material_name], tags.copy(), connectivity, state))
     missing = set(mesh.elements) - set(claimed)
     if missing:

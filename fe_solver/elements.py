@@ -113,13 +113,13 @@ def evaluate_standard_element(request: ElementRequest) -> ElementResponse:
         response = evaluate_material_point(
             request.material,
             MaterialRequest(
-                F_n, F, request.state_e_n[g], request.material.parameters,
+                F_n, F, request.material.state_layout.view(request.state_e_n[g]), request.material.properties,
                 request.point_properties, request.t_n, request.t_np1, request.need_tangent,
             ),
         )
         if not response.status.ok:
             return _failed(request, response.status.message, response.status.kind)
-        trial_state[g] = response.state_trial
+        trial_state[g] = response.state_trial.values
         grad_x = grad_X @ np.linalg.inv(F)
         B = _B_matrix(grad_x)
         sigma = response.P @ F.T / J
@@ -193,13 +193,13 @@ def evaluate_fbar_element(request: ElementRequest) -> ElementResponse:
         response = evaluate_material_point(
             request.material,
             MaterialRequest(
-                Fbar_n, Fbar, request.state_e_n[g], request.material.parameters,
+                Fbar_n, Fbar, request.material.state_layout.view(request.state_e_n[g]), request.material.properties,
                 request.point_properties, request.t_n, request.t_np1, request.need_tangent,
             ),
         )
         if not response.status.ok:
             return _failed(request, response.status.message, response.status.kind)
-        trial_state[g] = response.state_trial
+        trial_state[g] = response.state_trial.values
         P_eff = response.P / (alpha * alpha)
         grad_x_c = grad_X_c @ np.linalg.inv(Fc)
         grad_x_g = grad_X @ np.linalg.inv(Fg)
@@ -254,13 +254,14 @@ def evaluate_fbar_reference_element(request: ElementRequest) -> ElementResponse:
         response = evaluate_material_point(
             request.material,
             MaterialRequest(
-                alpha_n * Fg_n, alpha * Fg, request.state_e_n[g], request.material.parameters,
+                alpha_n * Fg_n, alpha * Fg, request.material.state_layout.view(request.state_e_n[g]),
+                request.material.properties,
                 request.point_properties, request.t_n, request.t_np1, True,
             ),
         )
         if not response.status.ok:
             return _failed(request, response.status.message, response.status.kind)
-        state_trial[g] = response.state_trial
+        state_trial[g] = response.state_trial.values
         P_eff = response.P / alpha**2
         dV0 = detJ0 * float(weight)
         f += np.einsum("iI,aI->ai", P_eff, grad_X).ravel() * dV0

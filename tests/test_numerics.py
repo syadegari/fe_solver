@@ -6,9 +6,41 @@ import numpy as np
 from scipy import sparse
 
 from fe_solver.elements import evaluate_element, evaluate_fbar_reference_element
-from fe_solver.materials import evaluate_neo_hookean, neo_hookean_definition
+from fe_solver.materials import (
+    evaluate_material_point,
+    material_definition,
+    neo_hook_definition,
+    register_material_model,
+    update_neo_hook,
+)
 from fe_solver.shape import HEX20_PARENT_NODES, HEX8_PARENT_NODES, hex20_shape, hex8_shape
-from fe_solver.types import ElementRequest, MaterialRequest
+from fe_solver.types import (
+    ElementRequest,
+    EvaluationStatus,
+    MaterialDefinition,
+    MaterialInitRequest,
+    MaterialInitResponse,
+    MaterialModel,
+    MaterialRequest,
+    MaterialResponse,
+    StateField,
+    StateLayout,
+)
+
+
+_PROBE_LAYOUT = StateLayout((StateField("accumulated", (2,)),))
+
+
+def init_history_probe(request: MaterialInitRequest) -> MaterialInitResponse:
+    return MaterialInitResponse(np.array([request.X[0], request.t0]), EvaluationStatus())
+
+
+def update_history_probe(request: MaterialRequest) -> MaterialResponse:
+    values = request.state_n.values + float(request.properties["increment"])
+    return MaterialResponse(
+        np.zeros((3, 3)), np.zeros((3, 3, 3, 3)) if request.need_tangent else None,
+        _PROBE_LAYOUT.view(values), EvaluationStatus(),
+    )
 
 
 class ShapeTests(unittest.TestCase):
@@ -28,26 +60,64 @@ class ShapeTests(unittest.TestCase):
 
 
 class MaterialTests(unittest.TestCase):
+    def test_model_properties_and_history_are_independent(self) -> None:
+        soft = material_definition(
+            {"name": "soft", "model": "neo_hook", "properties": {"mu": 1.0, "kappa": 20.0}}
+        )
+        stiff = material_definition(
+            {"name": "stiff", "model": "neo_hook", "properties": {"mu": 10.0, "kappa": 200.0}}
+        )
+        self.assertIs(soft.model, stiff.model)
+        self.assertIsNone(soft.model.initialize)
+        self.assertEqual(soft.state_layout.n_state, 0)
+        self.assertNotEqual(soft.properties, stiff.properties)
+
+    def test_registered_stateful_model_uses_named_state(self) -> None:
+        root = "history_probe"
+        try:
+            register_material_model(
+                MaterialModel(
+                    root, update_history_probe, init_history_probe,
+                    lambda values: {"increment": float(values["increment"])}, _PROBE_LAYOUT,
+                )
+            )
+        except Exception as exc:
+            if "already registered" not in str(exc):
+                raise
+        model = material_definition(
+            {"name": "probe", "model": root, "properties": {"increment": 0.25}}
+        )
+        initialized = model.model.initialize(
+            MaterialInitRequest(model.properties, None, np.array([2.0, 0.0, 0.0]), 0.5)
+        )
+        state = model.state_layout.view(initialized.state0)
+        response = evaluate_material_point(
+            model,
+            MaterialRequest(np.eye(3), np.eye(3), state, model.properties, None, 0.5, 1.0, False),
+        )
+        np.testing.assert_allclose(response.state_trial["accumulated"], [2.25, 0.75])
+
     def test_neo_hookean_tangent(self) -> None:
         rng = np.random.default_rng(7)
         F = np.eye(3) + 0.15 * rng.normal(size=(3, 3))
         params = {"mu": 2.3, "kappa": 17.0}
-        req = MaterialRequest(np.eye(3), F, np.empty(0), params, None, 0.0, 1.0, True)
-        result = evaluate_neo_hookean(req)
+        empty_state = StateLayout().view(np.empty(0))
+        req = MaterialRequest(np.eye(3), F, empty_state, params, None, 0.0, 1.0, True)
+        result = update_neo_hook(req)
         self.assertTrue(result.status.ok)
         dF = rng.normal(size=(3, 3))
         dF /= np.linalg.norm(dF)
         eps = 2e-7
-        pm = evaluate_neo_hookean(
-            MaterialRequest(np.eye(3), F - eps * dF, np.empty(0), params, None, 0, 1, False)
+        pm = update_neo_hook(
+            MaterialRequest(np.eye(3), F - eps * dF, empty_state, params, None, 0, 1, False)
         ).P
-        pp = evaluate_neo_hookean(
-            MaterialRequest(np.eye(3), F + eps * dF, np.empty(0), params, None, 0, 1, False)
+        pp = update_neo_hook(
+            MaterialRequest(np.eye(3), F + eps * dF, empty_state, params, None, 0, 1, False)
         ).P
         analytic = np.einsum("iIjJ,jJ->iI", result.A_alg, dF)
         np.testing.assert_allclose(analytic, (pp - pm) / (2 * eps), rtol=2e-8, atol=2e-8)
-        no_tangent = evaluate_neo_hookean(
-            MaterialRequest(np.eye(3), F, np.empty(0), params, None, 0, 1, False)
+        no_tangent = update_neo_hook(
+            MaterialRequest(np.eye(3), F, empty_state, params, None, 0, 1, False)
         )
         np.testing.assert_array_equal(result.P, no_tangent.P)
         self.assertIsNone(no_tangent.A_alg)
@@ -62,7 +132,7 @@ def element_request(formulation: str, u: np.ndarray, need_tangent: bool):
         ngauss = 8
     return ElementRequest(
         X, np.zeros(X.size), u, np.empty((ngauss, 0)),
-        neo_hookean_definition("m", {"mu": 1.7, "kappa": 11.0}), None,
+        neo_hook_definition("m", {"mu": 1.7, "kappa": 11.0}), None,
         0.0, 0.3, need_tangent, formulation,
     )
 
@@ -110,7 +180,7 @@ class ElementTests(unittest.TestCase):
         u += 0.003 * rng.normal(size=24)
         request = ElementRequest(
             X, np.zeros(24), u, np.empty((8, 0)),
-            neo_hookean_definition("m", {"mu": 1.7, "kappa": 11.0}), None,
+            neo_hook_definition("m", {"mu": 1.7, "kappa": 11.0}), None,
             0.0, 0.3, True, "hex8_fbar",
         )
         spatial = evaluate_element(request)

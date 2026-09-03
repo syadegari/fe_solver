@@ -38,8 +38,8 @@ points = [[0.0, 0.0], [1.0, 1.0]]
 
 [[materials]]
 name = "matrix"
-model = "neo_hookean"
-[materials.parameters]
+model = "neo_hook"
+[materials.properties]
 mu = 1.0
 kappa = 20.0
 

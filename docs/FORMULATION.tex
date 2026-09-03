@@ -133,6 +133,8 @@ $\bs d$, $\bs w$ & symmetric rate-of-deformation tensor and skew spin, $\bs L=\b
 $\bs\sigma$, $\bs\tau$, $\bs P$ & Cauchy, Kirchhoff, and first Piola--Kirchhoff stress \\
 $\overset{\mathrm T}{\bs\sigma}$ & Truesdell objective rate of Cauchy stress \\
 $\mathcal H$ & committed constitutive history/state variables owned by the material model \\
+$\boldsymbol\theta$ & immutable material properties shared by a named material definition, such as elastic moduli \\
+$\boldsymbol\rho_g$ & immutable material-point data that may vary spatially, such as an initial crystal orientation \\
 $\widehat{\mathcal H}_{n+1}^{(i)}$ & provisional material state returned for Newton trial $i$ at the target $t_{n+1}$; it is not committed until global convergence \\
 $\widehat{\bs P}$ & endpoint first Piola--Kirchhoff stress returned by the complete discrete material update; its arguments are defined in Eq.~\eqref{eq:Phat-map} \\
 $\mathbb A^{\mathrm{alg}}$ & algorithmic material tangent $D\bs P_{n+1}/D\bs F_{n+1}$ of the complete discrete update, with committed data fixed \\
@@ -276,11 +278,14 @@ For an incrementally integrated material, the corresponding $\calgT$ used in the
 
 \section{The discrete material map and the hierarchy of tangents}
 
+The data entering a constitutive law separate naturally into three categories. The vector or structured collection $\boldsymbol\theta$ contains fixed properties shared by a material definition. The data $\boldsymbol\rho_g$ are also fixed during the analysis but may differ between material points; an initial crystal orientation is a representative example. Only $\mathcal H_g$ contains evolving history. This distinction prevents spatial labels from being treated as constitutive history and permits several property sets to share the same constitutive equations.
+
 The local material update is considered as a discrete algorithm
 \begin{equation}
 \mathcal{M}:
 \left(
-\F_n,\F_{n+1}^{(i)},\mathcal H_n,t_n,t_{n+1}
+\F_n,\F_{n+1}^{(i)},\mathcal H_n;
+\boldsymbol\theta,\boldsymbol\rho_g,t_n,t_{n+1}
 \right)
 \longrightarrow
 \left(
@@ -296,11 +301,12 @@ Write the stress component of this discrete update as
 =
 \widehat{\Pstress}
 \left(
-\F_{n+1};\F_n,\mathcal H_n,\Delta t
+\F_{n+1};\F_n,\mathcal H_n,
+\boldsymbol\theta,\boldsymbol\rho_g,\Delta t
 \right).
 \label{eq:Phat-map}
 \end{equation}
-The hat does not denote a new stress measure. It denotes the algorithmically returned endpoint stress after the complete local integration from the committed state $(\F_n,\mathcal H_n)$ to the specified endpoint $\F_{n+1}$. With the committed arguments held fixed,
+The hat does not denote a new stress measure. It denotes the algorithmically returned endpoint stress after the complete local integration from the committed state $(\F_n,\mathcal H_n)$ to the specified endpoint $\F_{n+1}$. The material properties and point data parameterize that map but are not advanced by it. With all arguments after the semicolon held fixed,
 \begin{equation}
 \boxed{
 \Aalg_{n+1}
@@ -308,7 +314,8 @@ The hat does not denote a new stress measure. It denotes the algorithmically ret
 D_{\F_{n+1}}
 \widehat{\Pstress}
 \left(
-\F_{n+1};\F_n,\mathcal H_n,\Delta t
+\F_{n+1};\F_n,\mathcal H_n,
+\boldsymbol\theta,\boldsymbol\rho_g,\Delta t
 \right)
 }
 \label{eq:Aalg-def}

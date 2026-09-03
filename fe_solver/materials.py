@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Mapping
+from types import MappingProxyType
 
 import numpy as np
 
@@ -8,8 +9,7 @@ from .types import (
     EvaluationStatus,
     FailureKind,
     MaterialDefinition,
-    MaterialInitRequest,
-    MaterialInitResponse,
+    MaterialModel,
     MaterialRequest,
     MaterialResponse,
     ModelError,
@@ -17,40 +17,39 @@ from .types import (
 )
 
 
-def neo_hookean_definition(name: str, parameters: dict[str, float]) -> MaterialDefinition:
-    mu = float(parameters.get("mu", 0.0))
-    kappa = float(parameters.get("kappa", 0.0))
+def _validate_neo_hook(properties: Mapping[str, object]) -> Mapping[str, float]:
+    unknown = set(properties) - {"mu", "kappa"}
+    if unknown:
+        raise ModelError(f"unknown neo_hook properties: {sorted(unknown)}")
+    mu = float(properties.get("mu", 0.0))
+    kappa = float(properties.get("kappa", 0.0))
     if mu <= 0.0 or kappa <= 0.0:
-        raise ModelError(f"neo-Hookean material {name!r} requires mu > 0 and kappa > 0")
-    return MaterialDefinition(name, "neo_hookean", {"mu": mu, "kappa": kappa}, StateLayout(0))
+        raise ModelError("neo_hook requires mu > 0 and kappa > 0")
+    return MappingProxyType({"mu": mu, "kappa": kappa})
 
 
-def initialize_neo_hookean(request: MaterialInitRequest) -> MaterialInitResponse:
-    return MaterialInitResponse(np.empty(0), EvaluationStatus())
-
-
-def evaluate_neo_hookean(request: MaterialRequest) -> MaterialResponse:
+def update_neo_hook(request: MaterialRequest) -> MaterialResponse:
     F = np.asarray(request.F_np1, dtype=float)
     if F.shape != (3, 3) or not np.all(np.isfinite(F)):
         return MaterialResponse(
-            np.zeros((3, 3)), None, request.state_n.copy(),
+            np.zeros((3, 3)), None, request.state_n,
             EvaluationStatus(FailureKind.RECOVERABLE, "non-finite trial deformation gradient"),
         )
     J = float(np.linalg.det(F))
     if not np.isfinite(J) or J <= 0.0:
         return MaterialResponse(
-            np.zeros((3, 3)), None, request.state_n.copy(),
+            np.zeros((3, 3)), None, request.state_n,
             EvaluationStatus(FailureKind.RECOVERABLE, f"trial det(F) is nonpositive: {J}"),
         )
     try:
         FinvT = np.linalg.inv(F).T
     except np.linalg.LinAlgError:
         return MaterialResponse(
-            np.zeros((3, 3)), None, request.state_n.copy(),
+            np.zeros((3, 3)), None, request.state_n,
             EvaluationStatus(FailureKind.RECOVERABLE, "singular trial deformation gradient"),
         )
-    mu = float(request.parameters["mu"])
-    kappa = float(request.parameters["kappa"])
+    mu = float(request.properties["mu"])
+    kappa = float(request.properties["kappa"])
     logJ = float(np.log(J))
     P = mu * (F - FinvT) + kappa * logJ * FinvT
     A = None
@@ -61,27 +60,50 @@ def evaluate_neo_hookean(request: MaterialRequest) -> MaterialResponse:
             + kappa * np.einsum("iI,jJ->iIjJ", FinvT, FinvT)
             + (mu - kappa * logJ) * np.einsum("iJ,jI->iIjJ", FinvT, FinvT)
         )
-    return MaterialResponse(P, A, request.state_n.copy(), EvaluationStatus())
+    return MaterialResponse(P, A, request.state_n, EvaluationStatus())
 
 
-_INITIALIZERS: dict[str, Callable[[MaterialInitRequest], MaterialInitResponse]] = {
-    "neo_hookean": initialize_neo_hookean,
-}
-_EVALUATORS: dict[str, Callable[[MaterialRequest], MaterialResponse]] = {
-    "neo_hookean": evaluate_neo_hookean,
-}
+_MODELS: dict[str, MaterialModel] = {}
+
+
+def register_material_model(model: MaterialModel) -> None:
+    if model.root in _MODELS:
+        raise ModelError(f"material model root {model.root!r} is already registered")
+    _MODELS[model.root] = model
+
+
+def get_material_model(root: str) -> MaterialModel:
+    try:
+        return _MODELS[root]
+    except KeyError as exc:
+        raise ModelError(f"unsupported material model {root!r}") from exc
+
+
+register_material_model(
+    MaterialModel(
+        root="neo_hook",
+        update=update_neo_hook,
+        initialize=None,
+        validate_properties=_validate_neo_hook,
+        state_layout=StateLayout(),
+    )
+)
 
 
 def material_definition(data: dict) -> MaterialDefinition:
-    model = str(data["model"])
-    if model == "neo_hookean":
-        return neo_hookean_definition(str(data["name"]), dict(data.get("parameters", {})))
-    raise ModelError(f"unsupported material model {model!r}")
+    root = str(data["model"])
+    model = get_material_model(root)
+    if "properties" in data and "parameters" in data:
+        raise ModelError("a material cannot define both properties and legacy parameters")
+    raw_properties = data.get("properties", data.get("parameters", {}))
+    properties = MappingProxyType(dict(model.validate_properties(dict(raw_properties))))
+    return MaterialDefinition(str(data["name"]), model, properties)
 
 
-def initialize_material_state(definition: MaterialDefinition, request: MaterialInitRequest) -> MaterialInitResponse:
-    return _INITIALIZERS[definition.model](request)
+def neo_hook_definition(name: str, properties: Mapping[str, object]) -> MaterialDefinition:
+    model = get_material_model("neo_hook")
+    return MaterialDefinition(name, model, model.validate_properties(properties))
 
 
 def evaluate_material_point(definition: MaterialDefinition, request: MaterialRequest) -> MaterialResponse:
-    return _EVALUATORS[definition.model](request)
+    return definition.model.update(request)
