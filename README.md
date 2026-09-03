@@ -20,6 +20,7 @@ The checked-in acceptance meshes can be regenerated with:
 python examples/generate_elongated_block_gmsh.py --element hex8 --out examples/elongated_hex8.msh
 python examples/generate_elongated_block_gmsh.py --element hex20 --out examples/elongated_hex20.msh
 python examples/generate_periodic_cube_gmsh.py --out examples/periodic_cube_8x8x8.msh
+python examples/generate_heterogeneous_periodic_cube_gmsh.py --out examples/heterogeneous_periodic_cube_8x8x8.msh
 ```
 
 Run a deck from the repository root:
@@ -27,6 +28,9 @@ Run a deck from the repository root:
 ```bash
 python -m fe_solver examples/case_a_hex8.toml
 python -m fe_solver examples/case_b_hex8_fbar.toml
+python -m fe_solver examples/frame_objectivity_hex8.toml
+python -m fe_solver examples/periodic_core_isochoric_hex8_fbar.toml
+python -m fe_solver examples/periodic_core_shear_hex8_fbar.toml
 ```
 
 For a controlled partial run, add `--stop-time 0.5`. Relative mesh and output paths are resolved from the deck directory.
@@ -50,7 +54,7 @@ python -m unittest discover -s tests -v
 
 It checks shape functions, material and element tangents, homogeneous F-bar equivalence, Gmsh periodic maps, spanning-tree constraints, nonsymmetric whole-KKT solves, event merging, restart compatibility, and forced-failure cutback/rollback.
 
-Run all five normative decks and their cross-formulation checks with:
+Run the complete regression and featured-example acceptance suite with:
 
 ```bash
 python -m verification.run_acceptance

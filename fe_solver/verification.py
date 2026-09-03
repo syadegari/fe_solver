@@ -4,9 +4,10 @@ import numpy as np
 from scipy import sparse
 
 from .assembly import FEModel, assemble_external, assemble_internal, element_dofs
-from .config import value_expression
-from .constraints import ConstraintSystem
+from .constraints import ConstraintSystem, macro_deformation_function
 from .elements import evaluate_element
+from .quadrature import HEX20_POINTS, HEX20_WEIGHTS, HEX8_POINTS, HEX8_WEIGHTS
+from .shape import hex20_shape, hex8_shape
 from .types import ElementRequest, ModelError
 
 
@@ -55,16 +56,72 @@ def verify_analysis(
         if len(periodic) != 1:
             raise ModelError("affine-periodic verification requires one periodic_rve entry")
         entry = periodic[0]
-        expressions = [[value_expression(entry["macro_F"][i][j]) for j in range(3)] for i in range(3)]
-        Fbar = np.array(
-            [[expressions[i][j].evaluate(t, model.deck.curves) for j in range(3)] for i in range(3)]
-        )
+        Fbar = macro_deformation_function(entry, model.deck)(t)
         anchor = int(model.mesh.node_groups[str(entry["anchor_region"])][0])
         expected = (model.mesh.X - model.mesh.X[anchor]) @ (Fbar - np.eye(3)).T
         affine_error = _inf(u - expected.ravel())
         summary["affine_periodic_error_inf"] = affine_error
         if affine_error > float(options.get("affine_tolerance", 1.0e-9)):
             raise ModelError("periodic solution fails homogeneous affine-field verification")
+
+    if options.get("affine_deformation", False):
+        affine = model.deck.data.get("constraints", {}).get("affine", [])
+        if len(affine) != 1:
+            raise ModelError("affine-deformation verification requires one affine entry")
+        entry = affine[0]
+        Fbar = macro_deformation_function(entry, model.deck)(t)
+        origin = np.asarray(entry.get("origin", [0.0, 0.0, 0.0]), dtype=float)
+        expected = (model.mesh.X - origin) @ (Fbar - np.eye(3)).T
+        affine_error = _inf(u - expected.ravel())
+        summary["affine_deformation_error_inf"] = affine_error
+        if affine_error > float(options.get("affine_tolerance", 1.0e-9)):
+            raise ModelError("solution fails homogeneous affine-field verification")
+
+    if options.get("heterogeneous_periodic", False):
+        periodic = model.deck.data.get("constraints", {}).get("periodic_rve", [])
+        if len(periodic) != 1:
+            raise ModelError("heterogeneous-periodic verification requires one periodic_rve entry")
+        entry = periodic[0]
+        Fbar = macro_deformation_function(entry, model.deck)(t)
+        total_volume = 0.0
+        integrated_F = np.zeros((3, 3))
+        region_stress: dict[str, np.ndarray] = {}
+        for block, block_output in zip(model.blocks, base.gauss_output):
+            if block.formulation == "hex20":
+                shape, points, weights = hex20_shape, HEX20_POINTS, HEX20_WEIGHTS
+            else:
+                shape, points, weights = hex8_shape, HEX8_POINTS, HEX8_WEIGHTS
+            stress_integral = np.zeros((3, 3))
+            block_volume = 0.0
+            for connectivity, gauss_output in zip(block.connectivity, block_output):
+                X = model.mesh.X[connectivity]
+                for point, weight, F, stress in zip(
+                    points, weights, gauss_output.F_raw, gauss_output.cauchy_stress
+                ):
+                    _, dN = shape(point)
+                    dv0 = float(np.linalg.det(X.T @ dN) * weight)
+                    integrated_F += F * dv0
+                    stress_integral += stress * dv0
+                    total_volume += dv0
+                    block_volume += dv0
+            region_stress[block.region] = stress_integral / block_volume
+        average_F = integrated_F / total_volume
+        macro_error = _inf((average_F - Fbar).ravel())
+        summary["volume_average_F_error_inf"] = macro_error
+        if macro_error > float(options.get("macro_F_tolerance", 1.0e-9)):
+            raise ModelError("heterogeneous periodic solution has the wrong volume-average F")
+        anchor = int(model.mesh.node_groups[str(entry["anchor_region"])][0])
+        affine = (model.mesh.X - model.mesh.X[anchor]) @ (Fbar - np.eye(3)).T
+        nonaffine = _inf(u - affine.ravel())
+        summary["nonaffine_displacement_inf"] = nonaffine
+        if nonaffine < float(options.get("nonaffine_displacement_min", 1.0e-8)):
+            raise ModelError("heterogeneous periodic solution is unexpectedly affine")
+        if set(region_stress) != {"matrix", "core"}:
+            raise ModelError("heterogeneous periodic verification requires matrix and core regions")
+        stress_contrast = _inf((region_stress["core"] - region_stress["matrix"]).ravel())
+        summary["core_matrix_mean_stress_contrast_inf"] = stress_contrast
+        if stress_contrast < float(options.get("stress_contrast_min", 1.0e-6)):
+            raise ModelError("heterogeneous periodic regions have no resolved stress contrast")
 
     rng = np.random.default_rng(20240821)
     if options.get("check_element_directional_tangent", False):

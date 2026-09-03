@@ -1,0 +1,86 @@
+[analysis]
+name = "periodic_core_isochoric_hex8_fbar"
+t_start = 0.0
+t_end = 1.0
+
+[mesh]
+file = "heterogeneous_periodic_cube_8x8x8.msh"
+format = "gmsh_msh41"
+
+[time]
+dt_initial = 0.1
+dt_min = 1.0e-5
+dt_max = 0.1
+cutback_factor = 0.5
+growth_factor = 1.25
+grow_if_newton_iterations_le = 5
+max_attempts_per_increment = 14
+
+[nonlinear]
+method = "newton"
+max_iterations = 24
+force_rtol = 1.0e-8
+force_atol = 1.0e-10
+constraint_rtol = 1.0e-10
+constraint_atol = 1.0e-12
+check_displacement_increment = true
+displacement_rtol = 1.0e-10
+displacement_atol = 1.0e-12
+
+[linear_solver]
+backend = "scipy_splu"
+ordering = "COLAMD"
+singular_policy = "diagnose_and_abort"
+
+[[curves]]
+name = "ramp"
+points = [[0.0, 0.0], [1.0, 1.0]]
+
+[[materials]]
+name = "soft_matrix"
+model = "neo_hook"
+[materials.properties]
+mu = 1.0
+kappa = 20.0
+
+[[materials]]
+name = "stiff_core"
+model = "neo_hook"
+[materials.properties]
+mu = 10.0
+kappa = 200.0
+
+[[element_assignments]]
+region = "matrix"
+formulation = "hex8_fbar"
+material = "soft_matrix"
+
+[[element_assignments]]
+region = "core"
+formulation = "hex8_fbar"
+material = "stiff_core"
+
+[[constraints.periodic_rve]]
+slave_regions = ["xmax", "ymax", "zmax"]
+anchor_region = "anchor"
+macro_deformation = {type = "isochoric_uniaxial", axis = "x", stretch = {constant = 1.0, curve = "ramp", scale = 0.2}}
+
+[output]
+directory = "results/periodic_core_isochoric_hex8_fbar"
+interval = 0.1
+explicit_times = [1.0]
+database = "run.h5"
+history_file = "run_log.json"
+
+[restart]
+enabled = false
+keep_last = 0
+restart_from = ""
+
+[verification]
+heterogeneous_periodic = true
+macro_F_tolerance = 1.0e-9
+nonaffine_displacement_min = 1.0e-8
+stress_contrast_min = 1.0e-6
+require_positive_J = true
+check_global_force_balance = true

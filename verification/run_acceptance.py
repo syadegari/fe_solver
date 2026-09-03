@@ -1,8 +1,9 @@
-"""Run the normative neo-Hookean acceptance decks and report numerical checks."""
+"""Run the neo-Hookean regression and featured acceptance decks."""
 from __future__ import annotations
 
 import argparse
 import copy
+import h5py
 import json
 from pathlib import Path
 
@@ -17,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DECKS = [
     "case_a_hex8.toml", "case_a_hex8_fbar.toml", "case_a_hex20.toml",
     "case_b_hex8.toml", "case_b_hex8_fbar.toml",
+    "frame_objectivity_hex8.toml",
+    "periodic_core_isochoric_hex8_fbar.toml", "periodic_core_shear_hex8_fbar.toml",
 ]
 
 
@@ -33,10 +36,11 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, default=Path("/tmp/fe_solver_acceptance"))
     args = parser.parse_args()
     names = args.deck or DEFAULT_DECKS
+    output_root = args.output_root.resolve()
     results: dict[str, AnalysisResult] = {}
     summary: dict[str, dict] = {}
     for name in names:
-        result = run_deck(name, args.output_root)
+        result = run_deck(name, output_root)
         results[name] = result
         summary[name] = {
             "increments": len(result.increments),
@@ -44,6 +48,46 @@ def main() -> None:
             "total_cutbacks": sum(item.cutbacks for item in result.increments),
             **result.verification,
         }
+        if summary[name]["total_cutbacks"] != 0:
+            raise RuntimeError(f"acceptance deck {name} required an unintended cutback")
+
+    if "frame_objectivity_hex8.toml" in results:
+        path = output_root / "frame_objectivity_hex8/run.h5"
+        with h5py.File(path, "r") as archive:
+            times = np.asarray(archive["results/time"])
+            stretch = int(np.flatnonzero(np.isclose(times, 0.1))[0])
+            final = int(np.flatnonzero(np.isclose(times, 1.0))[0])
+            group = archive["results/blocks/0000"]
+            rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+
+            def rotate(values: np.ndarray) -> np.ndarray:
+                return np.einsum("ia,eab,jb->eij", rotation, values, rotation)
+
+            stress_stretch = np.asarray(group["cauchy_stress"][stretch])
+            stress_final = np.asarray(group["cauchy_stress"][final])
+            green_stretch = np.asarray(group["green_lagrange_strain"][stretch])
+            green_final = np.asarray(group["green_lagrange_strain"][final])
+            almansi_stretch = np.asarray(group["euler_almansi_strain"][stretch])
+            almansi_final = np.asarray(group["euler_almansi_strain"][final])
+            frame = {
+                "cauchy_rotation_error_inf": float(np.max(np.abs(stress_final - rotate(stress_stretch)))),
+                "green_invariance_error_inf": float(np.max(np.abs(green_final - green_stretch))),
+                "almansi_rotation_error_inf": float(np.max(np.abs(almansi_final - rotate(almansi_stretch)))),
+            }
+            stretch_stress_diagonal = np.mean(np.diagonal(stress_stretch, axis1=1, axis2=2), axis=0)
+            final_stress_diagonal = np.mean(np.diagonal(stress_final, axis1=1, axis2=2), axis=0)
+            stretch_almansi_diagonal = np.mean(np.diagonal(almansi_stretch, axis1=1, axis2=2), axis=0)
+            final_almansi_diagonal = np.mean(np.diagonal(almansi_final, axis1=1, axis2=2), axis=0)
+            if max(frame.values()) > 1.0e-10:
+                raise RuntimeError(f"frame-objectivity tensor transformation failed: {frame}")
+            if not (
+                np.argmax(stretch_stress_diagonal) == 0
+                and np.argmax(final_stress_diagonal) == 1
+                and np.argmax(stretch_almansi_diagonal) == 0
+                and np.argmax(final_almansi_diagonal) == 1
+            ):
+                raise RuntimeError("dominant spatial stress/strain components did not rotate from 11 to 22")
+            summary["frame_objectivity"] = frame
     if "case_b_hex8.toml" in results and "case_b_hex8_fbar.toml" in results:
         standard = results["case_b_hex8.toml"]
         fbar = results["case_b_hex8_fbar.toml"]

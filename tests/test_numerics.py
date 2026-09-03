@@ -122,6 +122,27 @@ class MaterialTests(unittest.TestCase):
         np.testing.assert_array_equal(result.P, no_tangent.P)
         self.assertIsNone(no_tangent.A_alg)
 
+    def test_neo_hookean_superposed_rotation(self) -> None:
+        angle = 0.73
+        Q = np.array(
+            [[np.cos(angle), -np.sin(angle), 0.0],
+             [np.sin(angle), np.cos(angle), 0.0],
+             [0.0, 0.0, 1.0]]
+        )
+        F = np.array([[1.12, 0.08, 0.0], [0.0, 0.96, 0.03], [0.0, 0.0, 1.01]])
+        properties = {"mu": 2.3, "kappa": 17.0}
+        state = StateLayout().view(np.empty(0))
+        response = update_neo_hook(
+            MaterialRequest(np.eye(3), F, state, properties, None, 0.0, 1.0, False)
+        )
+        rotated = update_neo_hook(
+            MaterialRequest(np.eye(3), Q @ F, state, properties, None, 0.0, 1.0, False)
+        )
+        np.testing.assert_allclose(rotated.P, Q @ response.P, atol=2e-14)
+        sigma = response.P @ F.T / np.linalg.det(F)
+        sigma_rotated = rotated.P @ (Q @ F).T / np.linalg.det(Q @ F)
+        np.testing.assert_allclose(sigma_rotated, Q @ sigma @ Q.T, atol=2e-14)
+
 
 def element_request(formulation: str, u: np.ndarray, need_tangent: bool):
     if formulation == "hex20":

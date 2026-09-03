@@ -216,6 +216,40 @@ with symmetric and skew parts
 \end{equation}
 True physical time is not required by the quasi-static equilibrium equations. The parameter $t$ may therefore be a monotonically increasing pseudo-time or load parameter for a rate-independent material. If a constitutive model is genuinely rate dependent, $t$ must instead be assigned its physical-time meaning and the physical $\Delta t$ must be supplied to the local update.
 
+\subsection{Superposed rigid rotations and reported strain measures}
+
+Consider a proper orthogonal tensor $\bs Q$, with $\bs Q^\top\bs Q=\I$ and $\det\bs Q=1$, superposed on a deformation. The rotated motion has
+\begin{equation}
+\F^+=\bs Q\F,
+\qquad
+J^+=J.
+\end{equation}
+Objectivity of a hyperelastic response requires
+\begin{equation}
+W(\bs Q\F)=W(\F),
+\qquad
+\Pstress(\bs Q\F)=\bs Q\Pstress(\F),
+\qquad
+\sig(\bs Q\F)=\bs Q\sig(\F)\bs Q^\top.
+\label{eq:superposed-rotation-stress}
+\end{equation}
+This endpoint covariance is the relevant large-rotation verification for the hyperelastic prototype. It tests the complete kinematic, constitutive, stress-transformation, and output path; it should not be described as a numerical integration test of a hypoelastic stress-rate equation.
+
+The Green--Lagrange and Euler--Almansi strains are
+\begin{equation}
+\bs E=\frac12(\F^\top\F-\I),
+\qquad
+\bs e=\frac12(\I-\F^{-\top}\F^{-1}).
+\end{equation}
+They intentionally report different frames. Under the same superposed rotation,
+\begin{equation}
+\bs E^+=\bs E,
+\qquad
+\bs e^+=\bs Q\bs e\bs Q^\top.
+\label{eq:superposed-rotation-strain}
+\end{equation}
+Thus a bar stretched along the reference $X_1$ direction and then rigidly rotated by $90^\circ$ in the $x_1$--$x_2$ plane retains its dominant $E_{11}$ component, whereas the dominant spatial stress and Euler--Almansi strain components move from $11$ to $22$. Reporting both strains makes this frame distinction explicit rather than labeling an unspecified tensor simply as ``strain.''
+
 \subsection{Increment and Newton-iteration notation}
 
 The state at $t_n$ is converged and committed. The next pseudo-time is
@@ -1280,6 +1314,19 @@ For a periodic pair of reference points $\bs X^+$ and $\bs X^-$ under prescribed
 \label{eq:periodic-pair}
 \end{equation}
 Each Cartesian component gives one row of $\vct C$ with coefficients $+1$ and $-1$ in the paired displacement degrees of freedom. The right-hand side $\vct d$ changes with the prescribed macroscopic loading, while $\vct C$ can remain fixed when the node pairing and reference geometry are fixed. Periodic pair constraints alone leave a rigid translation mode; one reference-node displacement or an equivalent zero-mean condition must also be supplied.
+
+Equivalently, write the microscopic displacement as
+\begin{equation}
+\bs u(\bs X)=(\overline{\F}-\I)\bs X+\widetilde{\bs u}(\bs X),
+\end{equation}
+where $\widetilde{\bs u}$ is periodic on opposite faces. The opposite-face contributions of $\widetilde{\bs u}$ cancel in the boundary integral, giving
+\begin{equation}
+\boxed{
+\frac{1}{|\Omega_0|}\int_{\Omega_0}\F\,\mathrm dV_0=\overline{\F}.
+}
+\label{eq:periodic-average-F}
+\end{equation}
+For a homogeneous body the fluctuation may vanish and the exact solution may be affine, so that case mainly checks pairing and affine reproduction. A heterogeneous core--matrix body generally develops a nonzero periodic fluctuation and distinct phase fields while still satisfying Eq.~\eqref{eq:periodic-average-F}; these three observations together form a more discriminating periodic-boundary-condition test.
 
 The constraints are assumed to have independent rows. Redundant constraints can make the augmented system singular even if every individual equation is physically reasonable. Removing obvious rigid modes is necessary but is not, for a general nonsymmetric tangent, a complete solvability test. The precise local condition is stated in Section~\ref{sec:kkt-solvability} using the tangent restricted to the admissible displacement space.
 

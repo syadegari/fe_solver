@@ -45,6 +45,65 @@ class _UnionFind:
         return True
 
 
+def macro_deformation_function(entry: dict, deck: Deck) -> Callable[[float], np.ndarray]:
+    """Compile either an explicit matrix or a supported exact macroscopic path."""
+    has_matrix = "macro_F" in entry
+    has_path = "macro_deformation" in entry
+    if has_matrix == has_path:
+        raise ModelError("constraint requires exactly one of macro_F or macro_deformation")
+    if has_matrix:
+        macro_data = entry["macro_F"]
+        if len(macro_data) != 3 or any(len(row) != 3 for row in macro_data):
+            raise ModelError("macro_F must be a 3-by-3 value-expression matrix")
+        expressions = [[value_expression(macro_data[i][j]) for j in range(3)] for i in range(3)]
+
+        def explicit(t: float) -> np.ndarray:
+            return np.asarray(
+                [[expressions[i][j].evaluate(t, deck.curves) for j in range(3)] for i in range(3)],
+                dtype=float,
+            )
+
+        return explicit
+
+    path = entry["macro_deformation"]
+    if not isinstance(path, dict) or "type" not in path:
+        raise ModelError("macro_deformation requires a type")
+    kind = str(path["type"])
+    if kind == "isochoric_uniaxial":
+        unknown = set(path) - {"type", "axis", "stretch"}
+        if unknown:
+            raise ModelError(f"unknown isochoric_uniaxial fields: {sorted(unknown)}")
+        axis = component_index(str(path.get("axis", "x")))
+        stretch = value_expression(path["stretch"])
+
+        def isochoric_uniaxial(t: float) -> np.ndarray:
+            axial = stretch.evaluate(t, deck.curves)
+            if axial <= 0.0:
+                raise ModelError("isochoric_uniaxial stretch must remain positive")
+            Fbar = np.eye(3) * axial ** -0.5
+            Fbar[axis, axis] = axial
+            return Fbar
+
+        return isochoric_uniaxial
+    if kind == "simple_shear":
+        unknown = set(path) - {"type", "direction", "normal", "amount"}
+        if unknown:
+            raise ModelError(f"unknown simple_shear fields: {sorted(unknown)}")
+        direction = component_index(str(path["direction"]))
+        normal = component_index(str(path["normal"]))
+        if direction == normal:
+            raise ModelError("simple_shear direction and normal must differ")
+        amount = value_expression(path["amount"])
+
+        def simple_shear(t: float) -> np.ndarray:
+            Fbar = np.eye(3)
+            Fbar[direction, normal] = amount.evaluate(t, deck.curves)
+            return Fbar
+
+        return simple_shear
+    raise ModelError(f"unsupported macro_deformation type {kind!r}")
+
+
 def build_constraints(deck: Deck, mesh: Mesh) -> ConstraintSystem:
     rows: list[int] = []
     cols: list[int] = []
@@ -105,11 +164,38 @@ def build_constraints(deck: Deck, mesh: Mesh) -> ConstraintSystem:
             str(entry.get("name", "linear")),
         )
 
+    for aindex, entry in enumerate(constraints.get("affine", [])):
+        regions = [str(region) for region in entry["regions"]]
+        if not regions:
+            raise ModelError("affine constraint requires at least one region")
+        unknown = [region for region in regions if region not in mesh.node_groups]
+        if unknown:
+            raise ModelError(f"affine constraint references unknown regions {unknown}")
+        nodes = np.unique(np.concatenate([mesh.node_groups[region] for region in regions]))
+        origin = np.asarray(entry.get("origin", [0.0, 0.0, 0.0]), dtype=float)
+        if origin.shape != (3,):
+            raise ModelError("affine constraint origin must contain three coordinates")
+        macro = macro_deformation_function(entry, deck)
+        for node_raw in nodes:
+            node = int(node_raw)
+            relative_position = mesh.X[node] - origin
+            for component in range(3):
+                def affine_rhs(
+                    t: float,
+                    row=component,
+                    position=relative_position.copy(),
+                    deformation=macro,
+                ) -> float:
+                    return float(((deformation(t) - np.eye(3)) @ position)[row])
+
+                add_row(
+                    {3 * node + component: 1.0},
+                    affine_rhs,
+                    f"affine:{aindex}:{node}:{component}",
+                )
+
     for pindex, entry in enumerate(constraints.get("periodic_rve", [])):
-        macro_data = entry["macro_F"]
-        if len(macro_data) != 3 or any(len(row) != 3 for row in macro_data):
-            raise ModelError("periodic macro_F must be a 3-by-3 value-expression matrix")
-        macro = [[value_expression(macro_data[i][j]) for j in range(3)] for i in range(3)]
+        macro = macro_deformation_function(entry, deck)
         union = _UnionFind(len(mesh.X))
         retained: list[tuple[int, int]] = []
         for region in entry["slave_regions"]:
@@ -122,11 +208,8 @@ def build_constraints(deck: Deck, mesh: Mesh) -> ConstraintSystem:
         for edge_index, (slave, master) in enumerate(retained):
             delta_X = mesh.X[slave] - mesh.X[master]
             for c in range(3):
-                def periodic_rhs(t: float, row=c, dx=delta_X.copy(), expressions=macro) -> float:
-                    Fbar = np.array(
-                        [[expressions[i][j].evaluate(t, deck.curves) for j in range(3)] for i in range(3)]
-                    )
-                    return float(((Fbar - np.eye(3)) @ dx)[row])
+                def periodic_rhs(t: float, row=c, dx=delta_X.copy(), deformation=macro) -> float:
+                    return float(((deformation(t) - np.eye(3)) @ dx)[row])
                 add_row(
                     {3 * slave + c: 1.0, 3 * master + c: -1.0},
                     periodic_rhs,
@@ -147,4 +230,3 @@ def build_constraints(deck: Deck, mesh: Mesh) -> ConstraintSystem:
         except RuntimeError as exc:
             raise ModelError("constraint matrix does not have independent rows") from exc
     return ConstraintSystem(C, tuple(rhs), tuple(names))
-

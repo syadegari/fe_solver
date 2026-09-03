@@ -920,7 +920,8 @@ Recoverable failures request a cutback from the unchanged committed state.
 
 ## 20. Input deck
 
-Use TOML for analysis/control data and a Gmsh `.msh` file for mesh topology/regions/periodicity. The five files under `examples/case_*.toml` are normative schema examples for the first acceptance suite.
+Use TOML for analysis/control data and a Gmsh `.msh` file for mesh topology/regions/periodicity. The checked-in TOML
+decks under `examples/` are normative schema examples for the acceptance suite.
 
 Minimum top-level responsibilities:
 
@@ -935,6 +936,7 @@ Minimum top-level responsibilities:
 [[element_assignments]]
 [[constraints.prescribed]]
 [[constraints.linear]]          # optional raw affine equation
+[[constraints.affine]]          # optional full affine boundary motion
 [[constraints.periodic_rve]]    # optional
 [[loads.nodal]]                 # optional dead nodal force
 [output]
@@ -1001,7 +1003,7 @@ The loader converts this into one row of `C u = d`. It must reject duplicate ter
 
 ### 20.4 Periodic RVE
 
-The input supplies the prescribed macroscopic deformation history; Gmsh supplies node pairing. The acceptance decks use:
+The input supplies the prescribed macroscopic deformation history; Gmsh supplies node pairing. An explicit matrix is:
 
 ```toml
 [[constraints.periodic_rve]]
@@ -1021,6 +1023,38 @@ d_{ab}(t)=[\overline{\boldsymbol F}(t)-\boldsymbol I](\boldsymbol X_b-\boldsymbo
 $$
 
 for retained periodic edges in the constraint graph.
+
+Exactly one of `macro_F` and `macro_deformation` is required. Named exact paths avoid approximating a nonlinear
+kinematic relation between curve knots:
+
+```toml
+macro_deformation = {type = "isochoric_uniaxial", axis = "x", stretch = {constant = 1.0, curve = "ramp", scale = 0.2}}
+```
+
+This gives `F11=lambda` and the two transverse stretches `lambda^(-1/2)` at every trial time, including a cutback
+endpoint. The other required path is
+
+```toml
+macro_deformation = {type = "simple_shear", direction = "x", normal = "y", amount = {curve = "ramp", scale = 0.2}}
+```
+
+which gives `F12=0.2*ramp(t)` with unit diagonal.
+
+### 20.5 Full affine boundary motion
+
+`constraints.affine` takes a union of boundary Physical Groups, an origin, and the same `macro_F` or
+`macro_deformation` description used by periodic constraints. Deduplicate nodes shared by several faces and generate
+one row per selected node and Cartesian component:
+
+```toml
+[[constraints.affine]]
+regions = ["xmin", "xmax", "ymin", "ymax", "zmin", "zmax"]
+origin = [0.0, 0.0, 0.0]
+macro_F = [ ... ]
+```
+
+The prescribed value is `u(X,t) = [macro_F(t)-I] [X-origin]`. This is the acceptance path for a homogeneous stretch
+followed by a superposed rigid rotation.
 
 ---
 
@@ -1057,8 +1091,9 @@ The required schema is logically:
 
 Block metadata identifies its region, material definition, and formulation; material metadata stores the immutable
 properties used in the run. This permits region/material selection without repeating constant identifiers for every
-cell. Store curves so reported fields can be correlated with prescribed histories. Store nodal constraint reactions
-because they support equilibrium audits, boundary resultants, and later RVE homogenization. Newton residuals,
+cell. Store curves so reported fields can be correlated with prescribed histories. Store nodal constraint reactions as
+`-C.T @ lambda` (the structure-on-constraint sign) because they support equilibrium audits, boundary resultants, and
+later RVE homogenization. Newton residuals,
 tolerances, cutback attempts, and verification summaries belong in the standalone JSON run log, not the field database.
 
 Do not store current coordinates, deformation gradients, `J`, or algorithmic material tangents. Current coordinates
@@ -1229,6 +1264,56 @@ $$
 up to the configured tolerance after the gauge translation is fixed. Every Gauss point should recover the prescribed homogeneous `F` to numerical precision.
 
 For this homogeneous solution, standard Hex8 and Hex8-Fbar must agree in stress, internal/reaction response, and material state. Their complete tangent matrices are not required to be identical for arbitrary non-affine perturbations.
+
+Cases A and B remain compact regression cases for element technology, tangent, restart, and homogeneous periodic
+reproduction. The following cases are the featured physical acceptance examples.
+
+### 23.3 Case C: stretch followed by a large rigid rotation
+
+Use the `4 x 1 x 1` linear-Hex8 bar. Prescribe an affine deformation on the union of its six boundary faces. From
+`t=0` to `t=0.1`, increase the axial stretch from 1 to 1.1. Then hold that stretch and left-multiply the deformation
+gradient by successive 5-degree rotations about the z axis until the total rotation is 90 degrees at `t=1`:
+
+$$
+\boldsymbol F(t=0.1)=\operatorname{diag}(1.1,1,1),
+\qquad
+\boldsymbol F(t=1)=\boldsymbol R_z(90^\circ)\boldsymbol F(t=0.1).
+$$
+
+Use the compressible neo-Hookean model so no constitutive history or rate-integration parameters obscure the frame
+test. Compare the saved state at the end of stretch, not the undeformed state, with the final rotated state. Require:
+
+- affine displacement reproduction and positive `J` throughout;
+- `P(RF)=R P(F)` in the material unit test;
+- final Cauchy stress and Euler--Almansi strain equal the 90-degree rotations of their `t=0.1` values;
+- Green--Lagrange strain at `t=1` equal its `t=0.1` material-frame value;
+- the dominant spatial normal components move from `11` to `22`.
+
+### 23.4 Cases D1/D2: heterogeneous periodic core--matrix cube
+
+Use a conforming unit-cube mesh with exactly `8 x 8 x 8` linear Hex8 elements. The centered
+`[0.25,0.75]^3` region contains `4 x 4 x 4 = 64` core elements; the remaining 448 elements form the matrix. Preserve
+Gmsh translational node maps on all opposite faces and anchor the origin. Assign two material definitions to the two
+regions. Both definitions call `neo_hook`; the core uses `mu` and `kappa` values ten times the matrix values.
+
+Run the same Hex8-Fbar domain with two exact macroscopic paths:
+
+$$
+\overline{\boldsymbol F}_{\mathrm{D1}}(1)
+=\operatorname{diag}\left(1.2,1/\sqrt{1.2},1/\sqrt{1.2}\right),
+$$
+
+and
+
+$$
+\overline{\boldsymbol F}_{\mathrm{D2}}(1)
+=\boldsymbol I+0.2\,\boldsymbol e_1\otimes\boldsymbol e_2.
+$$
+
+For both cases require positive material-point `J`, global equilibrium, periodic constraint satisfaction, and
+volume-average `F` equal to the prescribed macro deformation. Also require a resolved nonzero displacement
+fluctuation from the affine field and a nonzero difference between the core and matrix mean stresses. The HDF5 output
+must retain the two blocks/material definitions so these fields can be selected separately in postprocessing.
 
 ---
 

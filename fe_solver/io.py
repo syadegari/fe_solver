@@ -173,7 +173,8 @@ class HDF5ResultWriter:
         _create_time_dataset(results, "time", ())
         nodal = results.create_group("nodal")
         _create_time_dataset(nodal, "displacement", (len(self.model.mesh.X), 3))
-        _create_time_dataset(nodal, "constraint_reaction", (len(self.model.mesh.X), 3))
+        reaction = _create_time_dataset(nodal, "constraint_reaction", (len(self.model.mesh.X), 3))
+        reaction.attrs["sign_convention"] = "structure_on_constraint=-C.T@lambda"
         result_blocks = results.create_group("blocks")
         for index, block in enumerate(self.model.blocks):
             group = result_blocks.create_group(f"{index:04d}")
