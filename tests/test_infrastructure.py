@@ -6,14 +6,16 @@ import tempfile
 import unittest
 from unittest import mock
 
+import h5py
 import numpy as np
 from scipy import sparse
 
 from fe_solver.assembly import build_model
 from fe_solver.config import Deck, load_deck, mandatory_events
 from fe_solver.constraints import build_constraints
-from fe_solver.io import load_restart, write_restart
+from fe_solver.io import HDF5ResultWriter, load_restart, write_restart
 from fe_solver.mesh import read_gmsh
+from fe_solver.postprocess import write_xdmf
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import RecoverableError
 
@@ -59,7 +61,7 @@ class TimeRestartTests(unittest.TestCase):
         u = np.linspace(0.0, 0.01, mesh.ndof)
         lambdas = np.linspace(-1.0, 1.0, 36)
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "restart.npz"
+            path = Path(directory) / "restart.h5"
             write_restart(path, model, 0.5, 0.075, u, lambdas)
             t, dt, loaded_u, loaded_lambdas = load_restart(path, model)
         self.assertEqual(t, 0.5)
@@ -73,12 +75,11 @@ class TimeRestartTests(unittest.TestCase):
             root = Path(directory)
             first_data = copy.deepcopy(original.data)
             first_data["output"]["directory"] = str(root / "first")
-            first_data["output"]["write_vtu"] = False
             first_data["restart"]["interval"] = 0.05
             first_data["restart"]["explicit_times"] = []
             first = Deck(original.path, first_data, original.curves)
             run_analysis(first, stop_time=0.05)
-            restart_path = root / "first/restart/restart_000001.npz"
+            restart_path = root / "first/restart/restart_000001.h5"
 
             resumed_data = copy.deepcopy(first_data)
             resumed_data["output"]["directory"] = str(root / "resumed")
@@ -97,26 +98,55 @@ class TimeRestartTests(unittest.TestCase):
     def test_recoverable_failure_cuts_back_from_committed_state(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")
         data = copy.deepcopy(original.data)
-        data["output"]["directory"] = tempfile.mkdtemp(prefix="fe-cutback-")
-        data["output"]["write_vtu"] = False
-        data["restart"]["enabled"] = False
-        deck = Deck(original.path, data, original.curves)
-        from fe_solver import solver as solver_module
-        actual_assemble = solver_module.assemble_internal
-        calls = {"count": 0}
+        with tempfile.TemporaryDirectory(prefix="fe-cutback-") as directory:
+            data["output"]["directory"] = directory
+            data["restart"]["enabled"] = False
+            deck = Deck(original.path, data, original.curves)
+            from fe_solver import solver as solver_module
+            actual_assemble = solver_module.assemble_internal
+            calls = {"count": 0}
 
-        def fail_once(*args, **kwargs):
-            calls["count"] += 1
-            if calls["count"] == 1:
-                raise RecoverableError("deliberate trial failure")
-            return actual_assemble(*args, **kwargs)
+            def fail_once(*args, **kwargs):
+                calls["count"] += 1
+                # Call one recovers the initial accepted state for output.
+                if calls["count"] == 2:
+                    raise RecoverableError("deliberate trial failure")
+                return actual_assemble(*args, **kwargs)
 
-        with mock.patch("fe_solver.solver.assemble_internal", side_effect=fail_once):
-            result = run_analysis(deck, stop_time=0.05)
+            with mock.patch("fe_solver.solver.assemble_internal", side_effect=fail_once):
+                result = run_analysis(deck, stop_time=0.05)
         self.assertEqual(result.increments[0].cutbacks, 1)
         self.assertAlmostEqual(result.increments[0].t_np1, 0.025)
         self.assertAlmostEqual(result.t, 0.05)
         self.assertAlmostEqual(float(np.max(result.u)), 0.02, places=12)
+
+    def test_hdf5_result_schema_centroid_recovery_and_tail_truncation(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8.toml")
+        with tempfile.TemporaryDirectory() as directory:
+            data = copy.deepcopy(original.data)
+            data["output"]["directory"] = directory
+            data["restart"]["enabled"] = False
+            deck = Deck(original.path, data, original.curves)
+            result = run_analysis(deck, stop_time=0.05)
+            path = Path(directory) / "run.h5"
+            with h5py.File(path, "r+") as archive:
+                count = int(archive["results"].attrs["n_complete_steps"])
+                self.assertEqual(count, len(result.increments) + 1)
+                np.testing.assert_allclose(archive["results/time"], [0.0, 0.05])
+                self.assertNotIn("F", archive["results/blocks/0000"])
+                self.assertNotIn("current_coordinates", archive["mesh"])
+                displacement = archive["results/nodal/displacement"][-1]
+                np.testing.assert_allclose(displacement.ravel(), result.u)
+                dataset = archive["results/nodal/displacement"]
+                dataset.resize(count + 1, axis=0)
+            model = build_model(deck, read_gmsh(deck.resolve(deck.data["mesh"]["file"])))
+            with HDF5ResultWriter(path, model, resume=True) as writer:
+                self.assertEqual(writer.file["results/nodal/displacement"].shape[0], count)
+            xdmf = write_xdmf(path, Path(directory) / "view/case.xdmf")
+            text = xdmf.read_text(encoding="utf-8")
+            self.assertIn("../run.h5:/results/nodal/displacement", text)
+            self.assertEqual(text.count("<Time "), count)
+            self.assertTrue(xdmf.with_suffix(".xdmf.h5").is_file())
 
 
 if __name__ == "__main__":

@@ -52,9 +52,8 @@ material = "matrix"
 directory = "results/case_b_hex8"
 interval = 0.05
 explicit_times = [0.5, 1.0]
-write_vtu = true
-write_gauss_fields = ["F_raw", "J_raw", "F_material", "J_material", "cauchy_stress", "P_material", "P_effective"]
-write_newton_history = true
+database = "run.h5"
+history_file = "run_log.json"
 
 [restart]
 enabled = true

@@ -8,7 +8,7 @@ This repository implements the v1 contract in `docs/IMPLEMENTATION_SPEC.md`:
 - sparse COO/CSR assembly and a whole-system sparse-LU KKT solve for affine constraints;
 - exact and modified Newton, recoverable trial rollback, adaptive cutback, and mandatory events;
 - Gmsh Physical Groups and translational periodic node maps;
-- accepted-state VTU/NPZ output and compatible NPZ restart files.
+- append-only accepted-state HDF5 output, HDF5 restart, and separate temporal XDMF postprocessing.
 
 The production element tangents use the specification's current-configuration Truesdell push-forward, geometric stiffness, and F-bar projection correction. An independent total-reference F-bar kernel and centered directional finite differences cross-check that decomposition.
 
@@ -30,6 +30,15 @@ python -m fe_solver examples/case_b_hex8_fbar.toml
 ```
 
 For a controlled partial run, add `--stop-time 0.5`. Relative mesh and output paths are resolved from the deck directory.
+The explicit equivalent command is `python -m fe_solver solve DECK`.
+
+Create one ParaView-readable temporal dataset after a run with:
+
+```bash
+python -m fe_solver postprocess examples/results/case_a_hex8/run.h5
+```
+
+This writes an `.xdmf` entry point and its small connectivity-ordering sidecar. Field values remain in the solver's `run.h5`; no visualization files are produced during solution.
 
 ## Verify
 
@@ -53,5 +62,6 @@ python -m verification.run_acceptance
 - `fe_solver/materials.py`: named material API and neo-Hookean model
 - `fe_solver/elements.py`: standard and F-bar element kernels
 - `fe_solver/mesh.py`, `constraints.py`: Gmsh import and affine constraints
-- `fe_solver/assembly.py`, `solver.py`: sparse assembly and nonlinear solution
-- `fe_solver/io.py`, `config.py`: accepted-state/restart I/O and TOML/event handling
+- `fe_solver/preprocess.py`, `assembly.py`, `solver.py`: validated setup, sparse assembly, and nonlinear solution
+- `fe_solver/io.py`, `config.py`: HDF5 result/restart I/O and TOML/event handling
+- `fe_solver/postprocess.py`: temporal XDMF construction from a completed HDF5 run

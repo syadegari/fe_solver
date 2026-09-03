@@ -13,13 +13,12 @@ from .assembly import (
     FEModel,
     assemble_external,
     assemble_internal,
-    build_model,
     commit_trial_states,
 )
-from .config import Deck, load_deck, mandatory_events
-from .constraints import ConstraintSystem, build_constraints
-from .io import load_restart, write_accepted_output, write_restart
-from .mesh import read_gmsh
+from .config import Deck
+from .constraints import ConstraintSystem
+from .io import HDF5ResultWriter, load_restart, write_restart, write_run_log
+from .preprocess import PreparedAnalysis, prepare_analysis
 from .types import ModelError, RecoverableError
 
 
@@ -140,17 +139,16 @@ def _matches(t: float, values: set[float], tol: float) -> bool:
     return any(abs(t - value) <= tol for value in values)
 
 
-def run_analysis(deck_or_path: Deck | str | Path, *, stop_time: float | None = None) -> AnalysisResult:
-    deck = deck_or_path if isinstance(deck_or_path, Deck) else load_deck(deck_or_path)
-    if deck.data["mesh"].get("format") != "gmsh_msh41":
-        raise ModelError("v1 supports only mesh.format = 'gmsh_msh41'")
-    if deck.data["linear_solver"].get("backend") != "scipy_splu":
-        raise ModelError("v1 requires linear_solver.backend = 'scipy_splu'")
-    mesh_path = deck.resolve(str(deck.data["mesh"]["file"]))
-    mesh = read_gmsh(mesh_path)
-    model = build_model(deck, mesh)
-    constraints = build_constraints(deck, mesh)
-    events, output_times, restart_times = mandatory_events(deck)
+def run_analysis(
+    deck_or_path: PreparedAnalysis | Deck | str | Path, *, stop_time: float | None = None
+) -> AnalysisResult:
+    prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
+    deck = prepared.deck
+    mesh = prepared.mesh
+    model = prepared.model
+    constraints = prepared.constraints
+    events = prepared.events.copy()
+    restart_times = prepared.restart_times
     analysis = deck.data["analysis"]
     t_start, t_end = float(analysis["t_start"]), float(analysis["t_end"])
     if stop_time is not None:
@@ -174,6 +172,8 @@ def run_analysis(deck_or_path: Deck | str | Path, *, stop_time: float | None = N
 
     result = AnalysisResult(model, constraints, t_n, u_n, lambda_n)
     output_dir = deck.resolve(str(deck.data["output"]["directory"]))
+    database_path = output_dir / str(deck.data["output"].get("database", "run.h5"))
+    log_path = output_dir / str(deck.data["output"].get("history_file", "run_log.json"))
     dt_min = float(time_data["dt_min"])
     dt_max = float(time_data["dt_max"])
     cutback_factor = float(time_data["cutback_factor"])
@@ -185,64 +185,66 @@ def run_analysis(deck_or_path: Deck | str | Path, *, stop_time: float | None = N
         and int(time_data["max_attempts_per_increment"]) > 0
     ):
         raise ModelError("invalid pseudo-time controller parameters")
-    output_index = sum(value <= t_n + tol_time for value in output_times)
     restart_index = sum(value <= t_n + tol_time for value in restart_times)
-
-    while t_n < t_end - tol_time:
-        future_events = events[events > t_n + tol_time]
-        next_event = float(future_events[0]) if len(future_events) else t_end
-        attempts = 0
-        cutbacks = 0
-        while True:
-            attempts += 1
-            if attempts > int(time_data["max_attempts_per_increment"]):
-                raise ModelError("maximum increment attempts exceeded")
-            event_gap = next_event - t_n
-            dt = min(proposed_dt, event_gap, t_end - t_n)
-            event_landing_below_min = event_gap < dt_min + tol_time and abs(dt - event_gap) <= tol_time
-            if dt < dt_min - tol_time and not event_landing_below_min:
-                raise ModelError("cutback requires a pseudo-time increment below dt_min")
-            t_trial = t_n + dt
-            if abs(t_trial - next_event) <= tol_time:
-                t_trial = next_event
-            try:
-                trial = _newton_attempt(
-                    model, constraints, u_n, lambda_n, t_n, t_trial, result.newton_history
-                )
-            except RecoverableError:
-                cutbacks += 1
-                proposed_dt = min(proposed_dt, dt) * cutback_factor
-                if event_landing_below_min or proposed_dt < dt_min - tol_time:
-                    raise ModelError("recoverable failure cannot be cut back without violating dt_min")
-                continue
-            commit_trial_states(model, trial.assembly.state_trial)
-            old_t = t_n
-            t_n, u_n, lambda_n = t_trial, trial.u, trial.lambdas
-            result.increments.append(IncrementRecord(old_t, t_n, attempts, trial.iterations, cutbacks))
-            result.t, result.u, result.lambdas = t_n, u_n, lambda_n
-            reaction = -constraints.C.T @ lambda_n
-            if trial.iterations <= int(time_data["grow_if_newton_iterations_le"]):
-                proposed_dt = min(proposed_dt * growth_factor, dt_max)
-            else:
-                proposed_dt = min(proposed_dt, dt_max)
-            if _matches(t_n, output_times, tol_time):
-                output_index += 1
-                write_accepted_output(
-                    output_dir, output_index, t_n, u_n, lambda_n, np.asarray(reaction),
-                    trial.assembly, model, result.newton_history,
-                )
-            if _matches(t_n, restart_times, tol_time):
-                restart_index += 1
-                restart_dir = output_dir / "restart"
-                write_restart(
-                    restart_dir / f"restart_{restart_index:06d}.npz", model, t_n, proposed_dt, u_n, lambda_n
-                )
-                keep_last = int(deck.data["restart"].get("keep_last", 0))
-                if keep_last > 0:
-                    files = sorted(restart_dir.glob("restart_*.npz"))
-                    for obsolete in files[:-keep_last]:
-                        obsolete.unlink()
-            break
-    from .verification import verify_analysis
-    result.verification = verify_analysis(model, constraints, result.t, result.u, result.lambdas)
-    return result
+    writer = HDF5ResultWriter(database_path, model, resume=bool(restart_from))
+    try:
+        initial_assembly = assemble_internal(model, u_n, u_n, t_n, t_n, False)
+        writer.append(t_n, u_n, np.asarray(-constraints.C.T @ lambda_n), initial_assembly)
+        while t_n < t_end - tol_time:
+            future_events = events[events > t_n + tol_time]
+            next_event = float(future_events[0]) if len(future_events) else t_end
+            attempts = 0
+            cutbacks = 0
+            while True:
+                attempts += 1
+                if attempts > int(time_data["max_attempts_per_increment"]):
+                    raise ModelError("maximum increment attempts exceeded")
+                event_gap = next_event - t_n
+                dt = min(proposed_dt, event_gap, t_end - t_n)
+                event_landing_below_min = event_gap < dt_min + tol_time and abs(dt - event_gap) <= tol_time
+                if dt < dt_min - tol_time and not event_landing_below_min:
+                    raise ModelError("cutback requires a pseudo-time increment below dt_min")
+                t_trial = t_n + dt
+                if abs(t_trial - next_event) <= tol_time:
+                    t_trial = next_event
+                try:
+                    trial = _newton_attempt(
+                        model, constraints, u_n, lambda_n, t_n, t_trial, result.newton_history
+                    )
+                except RecoverableError:
+                    cutbacks += 1
+                    proposed_dt = min(proposed_dt, dt) * cutback_factor
+                    if event_landing_below_min or proposed_dt < dt_min - tol_time:
+                        raise ModelError("recoverable failure cannot be cut back without violating dt_min")
+                    continue
+                commit_trial_states(model, trial.assembly.state_trial)
+                old_t = t_n
+                t_n, u_n, lambda_n = t_trial, trial.u, trial.lambdas
+                result.increments.append(IncrementRecord(old_t, t_n, attempts, trial.iterations, cutbacks))
+                result.t, result.u, result.lambdas = t_n, u_n, lambda_n
+                reaction = np.asarray(-constraints.C.T @ lambda_n)
+                writer.append(t_n, u_n, reaction, trial.assembly)
+                if trial.iterations <= int(time_data["grow_if_newton_iterations_le"]):
+                    proposed_dt = min(proposed_dt * growth_factor, dt_max)
+                else:
+                    proposed_dt = min(proposed_dt, dt_max)
+                if _matches(t_n, restart_times, tol_time):
+                    restart_index += 1
+                    restart_dir = output_dir / "restart"
+                    write_restart(
+                        restart_dir / f"restart_{restart_index:06d}.h5",
+                        model, t_n, proposed_dt, u_n, lambda_n,
+                    )
+                    keep_last = int(deck.data["restart"].get("keep_last", 0))
+                    if keep_last > 0:
+                        files = sorted(restart_dir.glob("restart_*.h5"))
+                        for obsolete in files[:-keep_last]:
+                            obsolete.unlink()
+                write_run_log(log_path, result.increments, result.newton_history, result.verification)
+                break
+        from .verification import verify_analysis
+        result.verification = verify_analysis(model, constraints, result.t, result.u, result.lambdas)
+        write_run_log(log_path, result.increments, result.newton_history, result.verification)
+        return result
+    finally:
+        writer.close()

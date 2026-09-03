@@ -1,17 +1,33 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import sys
 
+from .postprocess import write_xdmf
 from .solver import run_analysis
 from .types import ModelError
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    # Preserve the original ``fe-solver deck.toml`` spelling.
+    if arguments and arguments[0] not in {"solve", "postprocess", "-h", "--help"}:
+        arguments.insert(0, "solve")
     parser = argparse.ArgumentParser(description="finite-strain FE prototype")
-    parser.add_argument("deck", help="path to a TOML analysis deck")
-    parser.add_argument("--stop-time", type=float, default=None)
-    args = parser.parse_args()
+    commands = parser.add_subparsers(dest="command", required=True)
+    solve = commands.add_parser("solve", help="preprocess and solve a TOML analysis deck")
+    solve.add_argument("deck", help="path to a TOML analysis deck")
+    solve.add_argument("--stop-time", type=float, default=None)
+    post = commands.add_parser("postprocess", help="create temporal XDMF from a run database")
+    post.add_argument("database", type=Path, help="path to run.h5")
+    post.add_argument("--output", type=Path, default=None, help="output .xdmf path")
+    args = parser.parse_args(arguments)
     try:
+        if args.command == "postprocess":
+            output = write_xdmf(args.database, args.output)
+            print(f"wrote {output}")
+            return
         result = run_analysis(args.deck, stop_time=args.stop_time)
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")

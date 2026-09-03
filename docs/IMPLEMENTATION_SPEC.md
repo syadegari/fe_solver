@@ -53,13 +53,17 @@ shape/             Hex8 and Hex20 interpolation and derivatives
 materials/         material registry, state layouts, reference neo-Hookean model
 elements/          standard Hex8/Hex20 and Hex8-Fbar kernels
 constraints/       C u = d generation, periodic equivalence classes
+preprocess/        input loading, validation, mesh/model/constraint construction
 assembly/          DOF numbering and sparse global assembly
 solver/            Newton, KKT linear solve, increment controller
-io/                TOML, results, restart
+io/                append-only HDF5 results, JSON run log, HDF5 restart
+postprocess/       temporal XDMF or other derived visualization formats
 verification/      tangent and acceptance checks
 ```
 
 No element kernel should import Gmsh. No material model should know which element formulation called it.
+The solver receives a prepared analysis and never writes a visualization format. Postprocessing reads the
+accepted-state database without re-running the solver.
 
 ---
 
@@ -1026,22 +1030,64 @@ for retained periodic edges in the constraint graph.
 
 `interval` generates uniformly spaced mandatory events starting from `t_start` and not exceeding `t_end`; `explicit_times` adds additional events. Duplicate times from load curves, output, restart, or the final endpoint are merged within the controller's time tolerance.
 
-### 21.2 Accepted-state output only
+### 21.2 Accepted-state HDF5 database
 
-Normal state output is written only after global convergence/commit at a mandatory output event.
+The solver creates one HDF5 result database per run. Append the cold-start or resumed accepted state and every
+subsequent globally converged, committed increment. A mandatory output time is therefore a solved database row;
+accepted endpoints introduced by cutback or growth control are retained as well. Never write a failed Newton trial.
 
-At minimum support:
+The required schema is logically:
 
-- pseudo-time;
-- nodal displacement;
-- constraint reaction vector or recoverable boundary reaction totals;
-- Newton iteration history;
-- selected Gauss-point fields;
-- material state variables when requested.
+```text
+/meta/resolved_input_json
+/mesh/reference_coordinates                   [n_node, 3]
+/mesh/node_tags                               [n_node]
+/mesh/blocks/<block>/connectivity             [n_elem, n_node_per_elem]
+/mesh/blocks/<block>/element_tags             [n_elem]
+/materials/<material>                         model/properties/state-layout metadata
+/curves/<curve>/{time,value}
+/results/time                                 [n_step]
+/results/nodal/displacement                   [n_step, n_node, 3]
+/results/nodal/constraint_reaction            [n_step, n_node, 3]
+/results/blocks/<block>/cauchy_stress         [n_step, n_elem, 3, 3]
+/results/blocks/<block>/green_lagrange_strain [n_step, n_elem, 3, 3]
+/results/blocks/<block>/euler_almansi_strain  [n_step, n_elem, 3, 3]
+/results/blocks/<block>/state/<field>         [n_step, n_elem, *field_shape]
+```
 
-VTU is suitable for visualization output. HDF5 is suitable for restart and structured state data.
+Block metadata identifies its region, material definition, and formulation; material metadata stores the immutable
+properties used in the run. This permits region/material selection without repeating constant identifiers for every
+cell. Store curves so reported fields can be correlated with prescribed histories. Store nodal constraint reactions
+because they support equilibrium audits, boundary resultants, and later RVE homogenization. Newton residuals,
+tolerances, cutback attempts, and verification summaries belong in the standalone JSON run log, not the field database.
 
-### 21.3 Restart contents
+Do not store current coordinates, deformation gradients, `J`, or algorithmic material tangents. Current coordinates
+and `F` are derived from reference coordinates and displacement. The tangent is an iteration-local linearization and
+has no required v1 postprocessing use case.
+
+Cell fields are reported at the parent-element centroid without adding a constitutive point:
+
+- reconstruct the centroid kinematic `F` from reference coordinates and nodal displacement, then compute
+  Green--Lagrange and Euler--Almansi strain;
+- for Hex8 and Hex8-Fbar, interpolate the eight integration-point stresses and reportable state values to the center,
+  which is their equal-weight arithmetic mean;
+- for Hex20, use the existing center integration point `(0,0,0)` from the 3x3x3 rule;
+- never call the material update at the centroid merely for output.
+
+For F-bar this recovery does not alter or bypass the formulation: stress comes from the projected material evaluations,
+while strain is explicitly a kinematic centroid quantity reconstructed from `u`. Future state variables that cannot be
+meaningfully interpolated must declare a model-specific reporting operation before being added.
+
+Make append completion transactional at the schema level: update `n_complete_steps` only after all datasets for a row
+have been flushed. On resume, reject a damaged committed prefix and truncate any longer incomplete tail to that count.
+
+### 21.3 Visualization postprocessing
+
+A separate command reads the HDF5 database and writes one temporal XDMF entry point containing all accepted states.
+It may write a small sidecar containing connectivity reordered for XDMF/VTK, especially for Gmsh Hex20. It must not
+modify constitutive results or require one visualization file per time step.
+
+### 21.4 Restart contents
 
 Store enough to reproduce the accepted state exactly:
 
@@ -1057,6 +1103,8 @@ mesh/assignment/schema identity needed for compatibility checks
 Do **not** store `F_n` as authoritative history. Reconstruct it from reference coordinates and committed `u_n`.
 
 Cold start calls the registered initializer only for models with nonempty history state. Restart never initializes material points; it loads committed state after compatibility checks.
+Restart is a separate HDF5 artifact from the results database. A restart does not depend on XDMF or other
+postprocessing output.
 
 ---
 
