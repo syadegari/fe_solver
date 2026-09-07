@@ -250,6 +250,60 @@ They intentionally report different frames. Under the same superposed rotation,
 \end{equation}
 Thus a bar stretched along the reference $X_1$ direction and then rigidly rotated by $90^\circ$ in the $x_1$--$x_2$ plane retains its dominant $E_{11}$ component, whereas the dominant spatial stress and Euler--Almansi strain components move from $11$ to $22$. Reporting both strains makes this frame distinction explicit rather than labeling an unspecified tensor simply as ``strain.''
 
+\subsection{Uniaxial-stress stretch and rotation benchmark}
+
+A prescribed axial stretch with fixed lateral stretches is not a uniaxial-stress test.
+For the compressible neo-Hookean energy used here, the Cauchy stress is
+\begin{equation}
+\sig=\frac{1}{J}\left[\mu(\F\F^\top-\bs I)+\kappa\ln J\,\bs I\right].
+\end{equation}
+Consider $\F_s=\operatorname{diag}(\lambda,a,a)$, where $a>0$ is the transverse stretch.
+Vanishing lateral traction requires
+\begin{equation}
+\mu(a^2-1)+\kappa\ln(\lambda a^2)=0.
+\label{eq:uniaxial-lateral-stretch}
+\end{equation}
+For positive $\mu$ and $\kappa$, its left-hand side is strictly increasing in $a$, ranges from
+$-\infty$ to $+\infty$, and therefore has exactly one positive root. For tensile $\lambda>1$,
+$\lambda^{-1/2}<a<1$: contraction is neither suppressed nor assumed exactly isochoric.
+The resulting stress is
+\begin{equation}
+\sig_s=\sigma_a\,\bs e_1\otimes\bs e_1,
+\qquad \sigma_a=\frac{\mu(\lambda^2-a^2)}{\lambda a^2}.
+\end{equation}
+After a superposed rotation $\F=\bs R_z(\theta)\F_s$,
+\begin{equation}
+\sig=\sigma_a
+\begin{bmatrix}
+\cos^2\theta & \cos\theta\sin\theta & 0\\
+\cos\theta\sin\theta & \sin^2\theta & 0\\
+0&0&0
+\end{bmatrix}.
+\end{equation}
+Thus $\sigma_{11}=0$ and $\sigma_{22}=\sigma_a$ at $90^\circ$. This homogeneous solution can be driven
+by prescribing its motion on the two end faces, including the compatible transverse contraction, while leaving
+the lateral surfaces traction-free. Interior and lateral-face nodes not on the ends are equilibrium unknowns.
+This avoids boundary layers due to rigid transverse clamps. Lateral strains remain nonzero despite zero lateral
+stress; their values rotate for the spatial strain but not for Green--Lagrange strain.
+
+\subsection{Six-component reporting convention}
+
+For any reported symmetric tensor $\bs S$, use the unscaled representation
+\begin{equation}
+\vct s_{\mathrm{out}}=
+\begin{bmatrix}S_{11}&S_{22}&S_{33}&S_{12}&S_{23}&S_{13}\end{bmatrix}^{\top}.
+\label{eq:output-six-components}
+\end{equation}
+In particular, strain shear components are tensor entries, not engineering shear strains.
+This reporting convention is separate from the engineering-shear vectors used in element assembly.
+For symmetric tensors $\bs S$ and $\bs T$, the double contraction is
+\begin{equation}
+\bs S:\bs T=\vct s_{\mathrm{out}}^\top
+\operatorname{diag}(1,1,1,2,2,2)\vct t_{\mathrm{out}}.
+\end{equation}
+Work and energy calculations must also use mutually conjugate stress and strain measures;
+the shear weights alone do not make Cauchy stress conjugate to Green--Lagrange strain.
+
 \subsection{Increment and Newton-iteration notation}
 
 The state at $t_n$ is converged and committed. The next pseudo-time is

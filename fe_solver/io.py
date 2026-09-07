@@ -11,11 +11,12 @@ import h5py
 import numpy as np
 
 from .assembly import AssemblyResult, FEModel
+from .output_fields import TENSOR_COMPONENTS, pack_symmetric
 from .shape import hex20_shape, hex8_shape
 from .types import ModelError
 
 
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 RESTART_SCHEMA_VERSION = 2
 
 
@@ -180,7 +181,7 @@ class HDF5ResultWriter:
             group = result_blocks.create_group(f"{index:04d}")
             group.attrs["region"] = block.region
             group.attrs["material"] = block.material.name
-            shape = (len(block.connectivity), 3, 3)
+            shape = (len(block.connectivity), 6)
             stress = _create_time_dataset(group, "cauchy_stress", shape)
             stress.attrs["centering"] = "cell"
             stress.attrs["recovery"] = "central_gauss_point" if block.formulation == "hex20" else "gauss_interpolation"
@@ -190,6 +191,10 @@ class HDF5ResultWriter:
             almansi = _create_time_dataset(group, "euler_almansi_strain", shape)
             almansi.attrs["frame"] = "spatial"
             almansi.attrs["centering"] = "cell"
+            for tensor in (stress, green, almansi):
+                tensor.attrs["component_order"] = np.asarray(TENSOR_COMPONENTS, dtype=h5py.string_dtype())
+                tensor.attrs["shear_convention"] = "tensorial"
+                tensor.attrs["shear_scale"] = 1.0
             state_group = group.create_group("state")
             for field in block.material.state_layout.fields:
                 dataset = _create_time_dataset(
@@ -247,9 +252,9 @@ class HDF5ResultWriter:
         self._append(self.file["results/nodal/constraint_reaction"], index, reaction.reshape(-1, 3))
         for block_index, fields in enumerate(cell_fields):
             group = self.file[f"results/blocks/{block_index:04d}"]
-            self._append(group["cauchy_stress"], index, fields.cauchy_stress)
-            self._append(group["green_lagrange_strain"], index, fields.green_lagrange_strain)
-            self._append(group["euler_almansi_strain"], index, fields.euler_almansi_strain)
+            self._append(group["cauchy_stress"], index, pack_symmetric(fields.cauchy_stress))
+            self._append(group["green_lagrange_strain"], index, pack_symmetric(fields.green_lagrange_strain))
+            self._append(group["euler_almansi_strain"], index, pack_symmetric(fields.euler_almansi_strain))
             for name, values in fields.state.items():
                 self._append(group[f"state/{name}"], index, values)
         self.file.flush()

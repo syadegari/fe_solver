@@ -11,6 +11,7 @@ import numpy as np
 
 from fe_solver.assembly import assemble_internal
 from fe_solver.config import Deck, load_deck
+from fe_solver.output_fields import unpack_symmetric
 from fe_solver.solver import AnalysisResult, run_analysis
 
 
@@ -63,17 +64,27 @@ def main() -> None:
             def rotate(values: np.ndarray) -> np.ndarray:
                 return np.einsum("ia,eab,jb->eij", rotation, values, rotation)
 
-            stress_stretch = np.asarray(group["cauchy_stress"][stretch])
-            stress_final = np.asarray(group["cauchy_stress"][final])
-            green_stretch = np.asarray(group["green_lagrange_strain"][stretch])
-            green_final = np.asarray(group["green_lagrange_strain"][final])
-            almansi_stretch = np.asarray(group["euler_almansi_strain"][stretch])
-            almansi_final = np.asarray(group["euler_almansi_strain"][final])
+            stress_stretch = unpack_symmetric(group["cauchy_stress"][stretch])
+            stress_final = unpack_symmetric(group["cauchy_stress"][final])
+            green_stretch = unpack_symmetric(group["green_lagrange_strain"][stretch])
+            green_final = unpack_symmetric(group["green_lagrange_strain"][final])
+            almansi_stretch = unpack_symmetric(group["euler_almansi_strain"][stretch])
+            almansi_final = unpack_symmetric(group["euler_almansi_strain"][final])
             frame = {
                 "cauchy_rotation_error_inf": float(np.max(np.abs(stress_final - rotate(stress_stretch)))),
                 "green_invariance_error_inf": float(np.max(np.abs(green_final - green_stretch))),
                 "almansi_rotation_error_inf": float(np.max(np.abs(almansi_final - rotate(almansi_stretch)))),
             }
+            for step in np.flatnonzero(times >= times[stretch]):
+                theta = np.deg2rad(90.0 * (times[step] - 0.1) / 0.9)
+                c, s = np.cos(theta), np.sin(theta)
+                rotation = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+                stress = unpack_symmetric(group["cauchy_stress"][step])
+                frame["cauchy_rotation_error_inf"] = max(
+                    frame["cauchy_rotation_error_inf"], float(np.max(np.abs(stress - rotate(stress_stretch))))
+                )
+            frame["initial_transverse_stress_inf"] = float(np.max(np.abs(stress_stretch[:, 1:, 1:])))
+            frame["final_sigma11_inf"] = float(np.max(np.abs(stress_final[:, 0, 0])))
             stretch_stress_diagonal = np.mean(np.diagonal(stress_stretch, axis1=1, axis2=2), axis=0)
             final_stress_diagonal = np.mean(np.diagonal(stress_final, axis1=1, axis2=2), axis=0)
             stretch_almansi_diagonal = np.mean(np.diagonal(almansi_stretch, axis1=1, axis2=2), axis=0)

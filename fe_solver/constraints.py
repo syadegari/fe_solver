@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Callable
 
 import numpy as np
 from scipy import sparse
+from scipy.optimize import brentq
 from scipy.sparse.linalg import splu
 
 from .config import Deck, component_index, value_expression
@@ -69,6 +71,43 @@ def macro_deformation_function(entry: dict, deck: Deck) -> Callable[[float], np.
     if not isinstance(path, dict) or "type" not in path:
         raise ModelError("macro_deformation requires a type")
     kind = str(path["type"])
+    if kind == "neo_hook_uniaxial_rotation":
+        unknown = set(path) - {"type", "material", "stretch", "angle_degrees"}
+        if unknown:
+            raise ModelError(f"unknown neo_hook_uniaxial_rotation fields: {sorted(unknown)}")
+        matches = [m for m in deck.data["materials"] if m["name"] == path.get("material")]
+        if len(matches) != 1 or matches[0].get("model") != "neo_hook":
+            raise ModelError("neo_hook_uniaxial_rotation requires a named neo_hook material")
+        properties = matches[0]["properties"]
+        mu, kappa = float(properties["mu"]), float(properties["kappa"])
+        if not (np.isfinite(mu) and np.isfinite(kappa) and mu > 0.0 and kappa > 0.0):
+            raise ModelError("neo_hook_uniaxial_rotation requires positive finite mu and kappa")
+        stretch = value_expression(path["stretch"])
+        angle = value_expression(path["angle_degrees"])
+
+        @lru_cache(maxsize=16)
+        def uniaxial_rotation(t: float) -> np.ndarray:
+            axial = stretch.evaluate(t, deck.curves)
+            degrees = angle.evaluate(t, deck.curves)
+            if not (np.isfinite(axial) and axial > 0.0 and np.isfinite(degrees)):
+                raise ModelError("uniaxial stretch must be positive and rotation finite")
+            # Exact traction-free lateral stretch: solve in log(a) to keep a>0.
+            # This is a material-specific boundary benchmark, not a material update.
+            log_axial = np.log(axial)
+            lower, upper = sorted((0.0, -0.5 * log_axial))
+            log_lateral = 0.0 if axial == 1.0 else brentq(
+                lambda q: mu * np.expm1(2.0 * q) + kappa * (log_axial + 2.0 * q),
+                lower, upper, xtol=1.0e-15,
+            )
+            lateral = np.exp(log_lateral)
+            theta = np.deg2rad(degrees)
+            c, s = np.cos(theta), np.sin(theta)
+            R = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+            F = R @ np.diag([axial, lateral, lateral])
+            F.setflags(write=False)
+            return F
+
+        return uniaxial_rotation
     if kind == "isochoric_uniaxial":
         unknown = set(path) - {"type", "axis", "stretch"}
         if unknown:

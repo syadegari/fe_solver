@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 
 from .io import RESULT_SCHEMA_VERSION
+from .output_fields import TENSOR_COMPONENTS
 from .types import ModelError
 
 
@@ -38,6 +39,25 @@ def _data_item(
     return item
 
 
+def _view_path(dataset_path: str, step: int) -> str:
+    return f"/steps/{step:06d}{dataset_path}"
+
+
+def _create_time_views(
+    visual: h5py.File, dataset: h5py.Dataset, complete: int, source_ref: str,
+) -> None:
+    """Expose time slices as ordinary HDF datasets without copying values.
+
+    ParaView's XDMF3 reader does not reliably resolve XML HyperSlab items.
+    HDF5 virtual datasets perform the same selection inside the HDF5 reader.
+    """
+    source = h5py.VirtualSource(source_ref, dataset.name, shape=dataset.shape)
+    for step in range(complete):
+        layout = h5py.VirtualLayout(shape=dataset.shape[1:], dtype=dataset.dtype)
+        layout[...] = source[step, ...]
+        visual.create_virtual_dataset(_view_path(dataset.name, step), layout)
+
+
 def _time_slice(
     parent: ET.Element,
     full_shape: tuple[int, ...],
@@ -45,19 +65,8 @@ def _time_slice(
     reference: str,
 ) -> None:
     item_shape = full_shape[1:]
-    slab = ET.SubElement(
-        parent,
-        "DataItem",
-        ItemType="HyperSlab",
-        Dimensions=" ".join(map(str, item_shape)),
-        Type="HyperSlab",
-    )
-    selector = ET.SubElement(slab, "DataItem", Dimensions=f"3 {len(full_shape)}", Format="XML")
-    start = [step, *([0] * len(item_shape))]
-    stride = [1] * len(full_shape)
-    count = [1, *item_shape]
-    selector.text = "\n" + "\n".join(" ".join(map(str, row)) for row in (start, stride, count)) + "\n"
-    _data_item(slab, full_shape, reference)
+    file_ref, dataset_path = reference.split(":", 1)
+    _data_item(parent, item_shape, f"{file_ref}:{_view_path(dataset_path, step)}")
 
 
 def _attribute_type(shape: tuple[int, ...]) -> str:
@@ -91,7 +100,11 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
         coordinates = source["mesh/reference_coordinates"]
         node_count = int(coordinates.shape[0])
         block_names = sorted(source["mesh/blocks"].keys())
+        source_ref = Path(os.path.relpath(database, output_path.parent)).as_posix()
+        sidecar_ref = sidecar.name
         with h5py.File(sidecar, "w") as visual:
+            for dataset in source["results/nodal"].values():
+                _create_time_views(visual, dataset, complete, source_ref)
             for name in block_names:
                 mesh_block = source[f"mesh/blocks/{name}"]
                 connectivity = np.asarray(mesh_block["connectivity"], dtype=np.int64)
@@ -99,14 +112,18 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
                 if formulation == "hex20":
                     connectivity = connectivity[:, _GMSH_TO_XDMF_HEX20]
                 visual.create_dataset(f"connectivity/{name}", data=connectivity)
+                result_block = source[f"results/blocks/{name}"]
+                for field_name in ("cauchy_stress", "green_lagrange_strain", "euler_almansi_strain"):
+                    _create_time_views(visual, result_block[field_name], complete, source_ref)
+                if "state" in result_block:
+                    for dataset in result_block["state"].values():
+                        _create_time_views(visual, dataset, complete, source_ref)
 
         xdmf = ET.Element("Xdmf", Version="3.0")
         domain = ET.SubElement(xdmf, "Domain")
         temporal = ET.SubElement(
             domain, "Grid", Name="accepted_states", GridType="Collection", CollectionType="Temporal"
         )
-        source_ref = Path(os.path.relpath(database, output_path.parent)).as_posix()
-        sidecar_ref = sidecar.name
         for step, time in enumerate(times):
             spatial = ET.SubElement(
                 temporal, "Grid", Name=f"state_{step:06d}", GridType="Collection", CollectionType="Spatial"
@@ -140,7 +157,7 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
                 attribute = ET.SubElement(
                     grid, "Attribute", Name="displacement", AttributeType="Vector", Center="Node"
                 )
-                _time_slice(attribute, tuple(displacement.shape), step, f"{source_ref}:/results/nodal/displacement")
+                _time_slice(attribute, tuple(displacement.shape), step, f"{sidecar_ref}:/results/nodal/displacement")
 
                 reaction = source["results/nodal/constraint_reaction"]
                 attribute = ET.SubElement(
@@ -148,18 +165,21 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
                 )
                 _time_slice(
                     attribute, tuple(reaction.shape), step,
-                    f"{source_ref}:/results/nodal/constraint_reaction",
+                    f"{sidecar_ref}:/results/nodal/constraint_reaction",
                 )
                 for field_name in (
                     "cauchy_stress", "green_lagrange_strain", "euler_almansi_strain"
                 ):
                     dataset = result_block[field_name]
                     attribute = ET.SubElement(
-                        grid, "Attribute", Name=field_name, AttributeType="Tensor", Center="Cell"
+                        grid, "Attribute", Name=field_name, AttributeType="Matrix", Center="Cell"
                     )
+                    # Generic six-component arrays preserve our ordering; do not
+                    # apply a reader-specific Tensor6 convention or expand to nine.
+                    ET.SubElement(attribute, "Information", Name="component_order", Value=",".join(TENSOR_COMPONENTS))
                     _time_slice(
                         attribute, tuple(dataset.shape), step,
-                        f"{source_ref}:/results/blocks/{name}/{field_name}",
+                        f"{sidecar_ref}:/results/blocks/{name}/{field_name}",
                     )
                 if "state" in result_block:
                     for state_name, dataset in result_block["state"].items():
@@ -172,7 +192,7 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
                         )
                         _time_slice(
                             attribute, tuple(dataset.shape), step,
-                            f"{source_ref}:/results/blocks/{name}/state/{state_name}",
+                            f"{sidecar_ref}:/results/blocks/{name}/state/{state_name}",
                         )
         ET.indent(xdmf, space="  ")
         ET.ElementTree(xdmf).write(output_path, encoding="utf-8", xml_declaration=True)

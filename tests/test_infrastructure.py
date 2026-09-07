@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+from xml.etree import ElementTree as ET
 
 import h5py
 import numpy as np
@@ -16,15 +17,40 @@ from fe_solver.constraints import build_constraints, macro_deformation_function
 from fe_solver.io import HDF5ResultWriter, load_restart, write_restart
 from fe_solver.mesh import read_gmsh
 from fe_solver.postprocess import write_xdmf
+from fe_solver.output_fields import TENSOR_COMPONENTS, pack_symmetric, unpack_symmetric
 from fe_solver.shape import hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
-from fe_solver.types import RecoverableError
+from fe_solver.types import ModelError, RecoverableError
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class MeshConstraintTests(unittest.TestCase):
+    def test_uniaxial_rotation_exact_between_events(self) -> None:
+        deck = load_deck(ROOT / "examples/frame_objectivity_hex8.toml")
+        entry = deck.data["constraints"]["affine"][0]
+        self.assertEqual(entry["regions"], ["xmin", "xmax"])
+        macro = macro_deformation_function(entry, deck)
+        for t in (0.0, 0.023, 0.05, 0.1, 0.173, 0.55, 0.987, 1.0):
+            F = macro(t)
+            axial = 1.0 + min(t / 0.1, 1.0) * 0.1
+            theta = np.deg2rad(max(0.0, (t - 0.1) / 0.9) * 90.0)
+            c, s = np.cos(theta), np.sin(theta)
+            R = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+            U = R.T @ F
+            np.testing.assert_allclose(U, np.diag(np.diag(U)), atol=1e-15)
+            self.assertAlmostEqual(U[0, 0], axial)
+            self.assertAlmostEqual(U[1, 1], U[2, 2])
+            J = np.linalg.det(F)
+            sigma = (F @ F.T - np.eye(3) + 20.0 * np.log(J) * np.eye(3)) / J
+            axial_sigma = (axial**2 - U[1, 1]**2) / J
+            np.testing.assert_allclose(sigma, axial_sigma * np.outer(R[:, 0], R[:, 0]), atol=2e-14)
+        bad = copy.deepcopy(entry)
+        bad["macro_deformation"]["material"] = "missing"
+        with self.assertRaisesRegex(ModelError, "named neo_hook"):
+            macro_deformation_function(bad, deck)
+
     def test_gmsh_groups_and_periodic_spanning_forest(self) -> None:
         deck = load_deck(ROOT / "examples/case_b_hex8.toml")
         mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
@@ -188,15 +214,15 @@ class TimeRestartTests(unittest.TestCase):
                 Finv = np.linalg.inv(F)
                 almansi = 0.5 * (np.eye(3) - Finv.T @ Finv)
                 np.testing.assert_allclose(
-                    archive["results/blocks/0000/green_lagrange_strain"][-1, 0], green
+                    archive["results/blocks/0000/green_lagrange_strain"][-1, 0], pack_symmetric(green)
                 )
                 np.testing.assert_allclose(
-                    archive["results/blocks/0000/euler_almansi_strain"][-1, 0], almansi
+                    archive["results/blocks/0000/euler_almansi_strain"][-1, 0], pack_symmetric(almansi)
                 )
                 assembly = assemble_internal(result.model, result.u, result.u, result.t, result.t, False)
                 expected_stress = np.mean(assembly.gauss_output[0][0].cauchy_stress, axis=0)
                 np.testing.assert_allclose(
-                    archive["results/blocks/0000/cauchy_stress"][-1, 0], expected_stress
+                    archive["results/blocks/0000/cauchy_stress"][-1, 0], pack_symmetric(expected_stress)
                 )
                 dataset = archive["results/nodal/displacement"]
                 dataset.resize(count + 1, axis=0)
@@ -205,7 +231,13 @@ class TimeRestartTests(unittest.TestCase):
                 self.assertEqual(writer.file["results/nodal/displacement"].shape[0], count)
             xdmf = write_xdmf(path, Path(directory) / "view/case.xdmf")
             text = xdmf.read_text(encoding="utf-8")
-            self.assertIn("../run.h5:/results/nodal/displacement", text)
+            self.assertIn("case.xdmf.h5:/steps/000001/results/nodal/displacement", text)
+            self.assertNotIn("HyperSlab", text)
+            with h5py.File(xdmf.with_suffix(".xdmf.h5"), "r") as visual:
+                ds = visual["steps/000001/results/nodal/displacement"]
+                self.assertTrue(ds.is_virtual)
+                self.assertEqual(ds.id.get_storage_size(), 0)
+                np.testing.assert_array_equal(ds[:].ravel(), result.u)
             self.assertEqual(text.count("<Time "), count)
             self.assertTrue(xdmf.with_suffix(".xdmf.h5").is_file())
 
@@ -222,7 +254,53 @@ class TimeRestartTests(unittest.TestCase):
                 block = archive["results/blocks/0000"]
                 self.assertNotIn("F", block)
                 self.assertEqual(block["cauchy_stress"].attrs["recovery"], "gauss_interpolation")
-                np.testing.assert_allclose(block["cauchy_stress"][-1, 0], expected)
+                np.testing.assert_allclose(block["cauchy_stress"][-1, 0], pack_symmetric(expected))
+
+    def test_tensorial_six_component_output_and_xdmf_views(self) -> None:
+        # All shears nonzero and distinct: detect 13/23 swaps and engineering scaling.
+        tensor = np.array([[1., 4., 6.], [4., 2., 5.], [6., 5., 3.]])
+        np.testing.assert_array_equal(pack_symmetric(tensor), [1., 2., 3., 4., 5., 6.])
+        np.testing.assert_array_equal(unpack_symmetric(pack_symmetric(tensor)), tensor)
+        deck = load_deck(ROOT / "examples/case_a_hex8.toml")
+        mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
+        model = build_model(deck, mesh)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.h5"
+            with HDF5ResultWriter(path, model) as writer:
+                for t in (0., 0.4, 1.):
+                    F = np.eye(3) + t * np.array([[.1, .2, .07], [0., -.02, .13], [0., 0., .03]])
+                    u = (mesh.X @ (F - np.eye(3)).T).ravel()
+                    assembly = assemble_internal(model, np.zeros_like(u), u, 0., t, False)
+                    writer.append(t, u, np.zeros_like(u), assembly)
+                    inverse = np.linalg.inv(F)
+                    expected = {
+                        "green_lagrange_strain": .5 * (F.T @ F - np.eye(3)),
+                        "euler_almansi_strain": .5 * (np.eye(3) - inverse.T @ inverse),
+                        "cauchy_stress": np.mean(assembly.gauss_output[0][0].cauchy_stress, axis=0),
+                    }
+                    for name, matrix in expected.items():
+                        ds = writer.file[f"results/blocks/0000/{name}"]
+                        self.assertEqual(ds.shape[1:], (32, 6))
+                        self.assertEqual(tuple(ds.attrs["component_order"]), TENSOR_COMPONENTS)
+                        self.assertEqual(ds.attrs["shear_scale"], 1.)
+                        np.testing.assert_allclose(ds[-1, 0], pack_symmetric(matrix), atol=1e-14)
+            xdmf = write_xdmf(path)
+            grids = ET.parse(xdmf).findall("./Domain/Grid/Grid")
+            with h5py.File(path, "r") as archive, h5py.File(xdmf.with_suffix(".xdmf.h5"), "r") as visual:
+                for step, grid in enumerate(grids):
+                    for name in expected:
+                        full = grid.find(f"./Grid/Attribute[@Name='{name}']")
+                        self.assertEqual(full.attrib["AttributeType"], "Matrix")
+                        self.assertEqual(full.find("DataItem").attrib["Dimensions"], "32 6")
+                        item = full.find("DataItem")
+                        self.assertEqual(item.attrib["Format"], "HDF")
+                        self.assertEqual(item.attrib["NumberType"], "Float")
+                        ds = visual[item.text.split(":", 1)[1]]
+                        self.assertTrue(ds.is_virtual)
+                        self.assertEqual(ds.id.get_storage_size(), 0)
+                        np.testing.assert_array_equal(ds[:], archive[f"results/blocks/0000/{name}"][step])
+                        for label in TENSOR_COMPONENTS:
+                            self.assertIsNone(grid.find(f"./Grid/Attribute[@Name='{name}_{label}']"))
 
 
 if __name__ == "__main__":

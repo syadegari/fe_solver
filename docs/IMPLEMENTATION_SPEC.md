@@ -1053,8 +1053,24 @@ origin = [0.0, 0.0, 0.0]
 macro_F = [ ... ]
 ```
 
-The prescribed value is `u(X,t) = [macro_F(t)-I] [X-origin]`. This is the acceptance path for a homogeneous stretch
-followed by a superposed rigid rotation.
+The prescribed value is `u(X,t) = [macro_F(t)-I] [X-origin]`. Only the listed groups are constrained; unlisted
+boundary faces are traction-free unless separately loaded.
+
+For the neo-Hookean uniaxial-stress rotation benchmark, use:
+
+```toml
+regions = ["xmin", "xmax"]
+macro_deformation = {type = "neo_hook_uniaxial_rotation", material = "bar", stretch = {curve = "axial_stretch"}, angle_degrees = {curve = "rotation_degrees"}}
+```
+
+This exact path is restricted to axial stretch along x and rotation about z. Resolve `mu` and `kappa` from the named
+`neo_hook` material; require positive finite parameters and a positive finite stretch. At each requested time,
+evaluate `lambda` and `theta` from the scalar expressions. Solve
+`mu*expm1(2*q) + kappa*(log(lambda)+2*q) = 0` for `q=log(a)` between `0` and `-log(lambda)/2`
+(sort the endpoints; use `q=0` for `lambda=1`). Return `Rz(theta) @ diag(lambda,a,a)` with `a=exp(q)`.
+Use degree-to-radian conversion for `angle_degrees`. Evaluate the path exactly at cutback endpoints too; do not
+linearly interpolate deformation-matrix entries. Cache repeated evaluations at a common time if useful.
+This is a benchmark boundary prescription, not a constitutive routine; the element/material interface is unchanged.
 
 ---
 
@@ -1083,9 +1099,9 @@ The required schema is logically:
 /results/time                                 [n_step]
 /results/nodal/displacement                   [n_step, n_node, 3]
 /results/nodal/constraint_reaction            [n_step, n_node, 3]
-/results/blocks/<block>/cauchy_stress         [n_step, n_elem, 3, 3]
-/results/blocks/<block>/green_lagrange_strain [n_step, n_elem, 3, 3]
-/results/blocks/<block>/euler_almansi_strain  [n_step, n_elem, 3, 3]
+/results/blocks/<block>/cauchy_stress         [n_step, n_elem, 6]
+/results/blocks/<block>/green_lagrange_strain [n_step, n_elem, 6]
+/results/blocks/<block>/euler_almansi_strain  [n_step, n_elem, 6]
 /results/blocks/<block>/state/<field>         [n_step, n_elem, *field_shape]
 ```
 
@@ -1095,6 +1111,13 @@ cell. Store curves so reported fields can be correlated with prescribed historie
 `-C.T @ lambda` (the structure-on-constraint sign) because they support equilibrium audits, boundary resultants, and
 later RVE homogenization. Newton residuals,
 tolerances, cutback attempts, and verification summaries belong in the standalone JSON run log, not the field database.
+
+Result schema version 3 stores symmetric stress and strain in the order `[11,22,33,12,23,13]`, with **tensorial**
+shear entries (no factor of two). Store dataset attributes `component_order` (six strings), `shear_convention="tensorial"`,
+and `shear_scale=1.0`. Internal element tensors and engineering-shear assembly vectors are unchanged; pack only at
+the output boundary. Generic state fields retain their declared shape; do not assume that a future 3-by-3 state field
+is symmetric merely from its shape. Reject version-2 result databases on resume/postprocessing with a schema diagnostic;
+rerun to produce the new format. Restart schema remains version 2 because its state/kinematic contents are unchanged.
 
 Do not store current coordinates, deformation gradients, `J`, or algorithmic material tangents. Current coordinates
 and `F` are derived from reference coordinates and displacement. The tangent is an iteration-local linearization and
@@ -1119,8 +1142,21 @@ have been flushed. On resume, reject a damaged committed prefix and truncate any
 ### 21.3 Visualization postprocessing
 
 A separate command reads the HDF5 database and writes one temporal XDMF entry point containing all accepted states.
-It may write a small sidecar containing connectivity reordered for XDMF/VTK, especially for Gmsh Hex20. It must not
+Write a sidecar containing connectivity reordered for XDMF/VTK and HDF5 virtual-dataset views of the saved fields. It must not
 modify constitutive results or require one visualization file per time step.
+
+Export the symmetric fields as six-component XDMF `Matrix` attributes, preserving the database ordering rather than
+using a reader-specific `Tensor6` convention. Do not add separate scalar aliases for the six components: ParaView exposes
+the components of each `Matrix` attribute in its component selector, and aliases would duplicate the coloring choices.
+Nodal displacement stays a three-component `Vector` on reference geometry for Warp By Vector.
+
+Do not use XML `HyperSlab` DataItems: the ParaView XDMF3 reader can treat these as untyped arrays and drop all fields,
+including displacement. Instead expose each accepted time slice as an HDF5 virtual
+dataset in the sidecar, and reference it with an ordinary, explicitly typed HDF DataItem. Virtual datasets must reference
+the original database using paths relative to the sidecar; they store selection metadata, not copies of field values.
+Keep the original database with the visualization artifacts. Generate views only for the committed prefix.
+Verify actual reader arrays and Warp By Vector through `verification/check_paraview.py` when ParaView is available;
+XML parsing alone is not an interoperability test.
 
 ### 21.4 Restart contents
 
@@ -1270,15 +1306,20 @@ reproduction. The following cases are the featured physical acceptance examples.
 
 ### 23.3 Case C: stretch followed by a large rigid rotation
 
-Use the `4 x 1 x 1` linear-Hex8 bar. Prescribe an affine deformation on the union of its six boundary faces. From
+Use the `4 x 1 x 1` linear-Hex8 bar. Prescribe affine motion only on `xmin` and `xmax`; leave all four lateral faces
+traction-free. End faces contract with the exact `neo_hook_uniaxial_rotation` path from Section 20.5, avoiding
+clamp-induced transverse stress. From
 `t=0` to `t=0.1`, increase the axial stretch from 1 to 1.1. Then hold that stretch and left-multiply the deformation
 gradient by successive 5-degree rotations about the z axis until the total rotation is 90 degrees at `t=1`:
 
 $$
-\boldsymbol F(t=0.1)=\operatorname{diag}(1.1,1,1),
+\boldsymbol F(t=0.1)=\operatorname{diag}(1.1,a,a),
 \qquad
 \boldsymbol F(t=1)=\boldsymbol R_z(90^\circ)\boldsymbol F(t=0.1).
 $$
+
+For `mu=1`, `kappa=20`, the lateral stretch is approximately `a=0.95553739`. Compute it from the prescribed equation,
+not this rounded value. Rotation is continuous and exact between the 5-degree output events.
 
 Use the compressible neo-Hookean model so no constitutive history or rate-integration parameters obscure the frame
 test. Compare the saved state at the end of stretch, not the undeformed state, with the final rotated state. Require:
@@ -1288,6 +1329,8 @@ test. Compare the saved state at the end of stretch, not the undeformed state, w
 - final Cauchy stress and Euler--Almansi strain equal the 90-degree rotations of their `t=0.1` values;
 - Green--Lagrange strain at `t=1` equal its `t=0.1` material-frame value;
 - the dominant spatial normal components move from `11` to `22`.
+- transverse stress is zero at the end of stretch; final `sigma11` and `sigma33` are zero within `1e-10`;
+- Cauchy stress obeys the rotation relation at every saved rotation time, not just the final endpoint.
 
 ### 23.4 Cases D1/D2: heterogeneous periodic core--matrix cube
 

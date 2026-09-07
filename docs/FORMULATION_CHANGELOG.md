@@ -2,6 +2,13 @@
 
 This formulation is the normalized successor to the earlier combined teaching/implementation manuscript.
 
+2026-09-07 output and frame-benchmark refinement:
+
+- derived the positive transverse stretch that makes the neo-Hookean bar's lateral surfaces traction-free;
+- clarified end-face-only motion and the expected axial Cauchy-stress transfer under a 90-degree rotation;
+- distinguished unscaled six-component reporting from engineering-shear assembly, including double-contraction weights;
+- kept HDF5/XDMF schema and boundary-path implementation rules in `IMPLEMENTATION_SPEC.md`.
+
 Key changes in the final normalization:
 
 - separated the mathematical formulation from the coding contract;
