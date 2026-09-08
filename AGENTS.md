@@ -33,6 +33,13 @@ Mathematical reference: `docs/FORMULATION.tex` (PDF copy is for human reading). 
 
 ## Development behavior
 
+### Python environment
+
+- Run project Python commands, tests, examples, and Gmsh generators in the Conda environment `py3.14`.
+- Prefer `conda run -n py3.14 python ...` (or the interpreter at `/home/srn/miniconda3/envs/py3.14/bin/python`) because separate tool calls do not retain `conda activate` state.
+- Before reporting a Python dependency as unavailable, check it inside `py3.14`.
+- The user authorizes installing missing project packages into `py3.14` with `conda run -n py3.14 python -m pip install ...`; platform sandbox approval may still be required for the write.
+
 Read `docs/IMPLEMENTATION_SPEC.md` before broad implementation. Inspect the supplied example mesh generators and TOML decks. Implement verification tests alongside each numerical component, especially finite-difference material and element tangents.
 
 Small exploratory scripts are encouraged when they establish a convention or test a formula. If the specification is incomplete or appears mathematically inconsistent, report the issue before building dependent code.
