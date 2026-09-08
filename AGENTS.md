@@ -43,6 +43,7 @@ Mathematical reference: `docs/FORMULATION.tex` (PDF copy is for human reading). 
 ### Local machine data and security
 
 - If `.codex/project-local.md` exists, read it for machine-specific paths and, later, the SSH alias and remote workspace. It is local-only and must remain ignored by Git.
+- `notes.org` is the user's private scratchpad. Do not read, search, display, modify, or commit it or its editor backup/lock files unless the user explicitly grants permission for that specific use.
 - Do not put usernames, absolute home-directory paths, hostnames, IP addresses, SSH destinations, credentials, private keys, tokens, or passphrases in tracked files.
 - Tracked commands and scripts must accept machine-specific values through environment variables, command-line arguments, or ignored local configuration.
 - Never expose the personal remote worker to untrusted public pull-request jobs. It may run only trusted revisions or manually launched jobs unless disposable isolation is added later.

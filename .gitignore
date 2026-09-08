@@ -5,3 +5,6 @@ examples/results/
 .pytest_cache/
 notes.org
 .codex/project-local.md
+\#notes.org\#
+.#notes.org
+notes.org~
