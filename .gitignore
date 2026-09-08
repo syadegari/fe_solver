@@ -4,3 +4,4 @@ examples/results/
 *.egg-info/
 .pytest_cache/
 notes.org
+.codex/project-local.md

@@ -36,9 +36,30 @@ Mathematical reference: `docs/FORMULATION.tex` (PDF copy is for human reading). 
 ### Python environment
 
 - Run project Python commands, tests, examples, and Gmsh generators in the Conda environment `py3.14`.
-- Prefer `conda run -n py3.14 python ...` (or the interpreter at `/home/srn/miniconda3/envs/py3.14/bin/python`) because separate tool calls do not retain `conda activate` state.
+- Prefer `conda run -n py3.14 python ...` because separate tool calls do not retain `conda activate` state.
 - Before reporting a Python dependency as unavailable, check it inside `py3.14`.
 - The user authorizes installing missing project packages into `py3.14` with `conda run -n py3.14 python -m pip install ...`; platform sandbox approval may still be required for the write.
+
+### Local machine data and security
+
+- If `.codex/project-local.md` exists, read it for machine-specific paths and, later, the SSH alias and remote workspace. It is local-only and must remain ignored by Git.
+- Do not put usernames, absolute home-directory paths, hostnames, IP addresses, SSH destinations, credentials, private keys, tokens, or passphrases in tracked files.
+- Tracked commands and scripts must accept machine-specific values through environment variables, command-line arguments, or ignored local configuration.
+- Never expose the personal remote worker to untrusted public pull-request jobs. It may run only trusted revisions or manually launched jobs unless disposable isolation is added later.
+
+### Git attribution
+
+- Repository-default Git identity belongs to the user, so manual commits must be authored and committed by `Sourena Yadegari <srn.yad@gmail.com>`.
+- When Codex creates a commit, Codex must remain both author and committer by using command-scoped identity overrides: `git -c user.name="Codex Implementation Agent" -c user.email="codex@local.invalid" commit ...`.
+- Do not add co-author or assistance trailers unless the user requests them for a particular commit.
+- Do not rewrite existing commit identities unless the user explicitly requests a history rewrite.
+
+### Verification execution
+
+- Run small tests and bounded verification locally in `py3.14`.
+- For a long or potentially unbounded solve, prepare a one-time launch script or exact command for the user instead of holding an interactive agent turn open. Keep full logs and large artifacts on disk and inspect concise summaries or relevant failure excerpts.
+- Remote bootstrap, synchronization, and a parallel test runner are deferred until the first run that needs them. Follow `docs/DEVELOPMENT_WORKFLOW.md` when introducing them.
+- Model changes are manual. Suggest a model change only when it would materially help; do not build an external loop around Codex.
 
 Read `docs/IMPLEMENTATION_SPEC.md` before broad implementation. Inspect the supplied example mesh generators and TOML decks. Implement verification tests alongside each numerical component, especially finite-difference material and element tangents.
 
