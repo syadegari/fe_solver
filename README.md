@@ -35,6 +35,7 @@ python -m fe_solver examples/frame_objectivity_hex8.toml
 python -m fe_solver examples/periodic_core_isochoric_hex8_fbar.toml
 python -m fe_solver examples/periodic_core_shear_hex8_fbar.toml
 python -m fe_solver examples/j2_necking_bar_hex8_fbar.toml
+python -m fe_solver examples/j2_necking_prism_small_hex8.toml
 python -m fe_solver examples/j2_necking_prism_small_hex8_fbar.toml
 ```
 
@@ -115,7 +116,22 @@ python -m verification.check_j2_necking examples/results/j2_necking_bar_hex8_fba
 
 The HDF5 database stores the inverse plastic metric and equivalent plastic strain at element centroids. J2 equivalent stress is intentionally not stored because it can be calculated from the six Cauchy-stress components in ParaView.
 
-The 96-element `j2_necking_prism_small_hex8_fbar.toml` case is a fast qualitative nonlinear-solver diagnostic, not a replacement for the circular benchmark. Both necking decks enable residual-based Newton backtracking. Invalid intermediate configurations reject only the current search length; pseudo-time cutback remains the fallback when no admissible decreasing search step exists.
+The 96-element `j2_necking_prism_small_hex8_fbar.toml` case is a qualitative nonlinear-solver diagnostic, not a replacement for the circular benchmark. `j2_necking_prism_small_hex8.toml` uses the identical mesh, material, loading, and solver controls as an unstabilized standard-Hex8 comparison. All J2 necking decks enable residual-based Newton backtracking. Invalid intermediate configurations reject only the current search length; pseudo-time cutback remains the fallback when no admissible decreasing search step exists.
+
+Extract the square-prism response or compare the two formulations with:
+
+```bash
+python -m verification.check_j2_prism \
+  examples/results/j2_necking_prism_small_hex8_fbar/run.h5 --summary-only
+python -m verification.check_j2_prism \
+  examples/results/j2_necking_prism_small_hex8_fbar/run.h5 \
+  --compare examples/results/j2_necking_prism_small_hex8/run.h5 \
+  --summary-only --output /tmp/j2_prism_comparison.json
+```
+
+The comparison reports reaction, transverse contraction, plastic localization, raw and material-seen Jacobian ranges,
+and cross-section mean-stress variation. The standard Hex8 result is a locking control; convergence alone does not make
+it a reference solution.
 
 Standalone material-point characterization and evolved-state tangent diagnostics are available through:
 

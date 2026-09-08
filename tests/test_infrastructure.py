@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 from scipy import sparse
 
-from fe_solver.assembly import assemble_internal, build_model
+from fe_solver.assembly import assemble_internal, build_model, commit_trial_states
 from fe_solver.config import Deck, load_deck, mandatory_events
 from fe_solver.constraints import build_constraints, macro_deformation_function
 from fe_solver.io import HDF5ResultWriter, load_restart, write_restart
@@ -22,6 +22,7 @@ from fe_solver.quadrature import HEX8_POINTS
 from fe_solver.shape import hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import ModelError, RecoverableError
+from verification.check_j2_prism import compare_prism_histories, extract_prism_history
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -208,6 +209,41 @@ class TimeRestartTests(unittest.TestCase):
             text = xdmf.read_text(encoding="utf-8")
             self.assertIn('Name="state_plastic_metric_inverse" AttributeType="Matrix"', text)
             self.assertIn('Name="component_order" Value="11,22,33,12,23,13"', text)
+
+    def test_small_j2_prism_decks_are_paired_and_diagnostic_reads_database(self) -> None:
+        fbar = load_deck(ROOT / "examples/j2_necking_prism_small_hex8_fbar.toml")
+        standard = load_deck(ROOT / "examples/j2_necking_prism_small_hex8.toml")
+        fbar_data = copy.deepcopy(fbar.data)
+        standard_data = copy.deepcopy(standard.data)
+        standard_data["analysis"]["name"] = fbar_data["analysis"]["name"]
+        standard_data["element_assignments"][0]["formulation"] = "hex8_fbar"
+        standard_data["output"]["directory"] = fbar_data["output"]["directory"]
+        self.assertEqual(standard_data, fbar_data)
+
+        mesh = read_gmsh(fbar.resolve(fbar.data["mesh"]["file"]))
+        model = build_model(fbar, mesh)
+        u_n = np.zeros(mesh.ndof)
+        deformation = np.diag([0.99, 0.99, 1.02])
+        u_trial = (mesh.X @ (deformation - np.eye(3)).T).ravel()
+        initial = assemble_internal(model, u_n, u_n, 0.0, 0.0, False)
+        trial = assemble_internal(model, u_n, u_trial, 0.0, 0.1, False)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "prism.h5"
+            with HDF5ResultWriter(path, model) as writer:
+                writer.append(0.0, u_n, np.zeros_like(u_n), initial)
+                commit_trial_states(model, trial.state_trial)
+                writer.append(0.1, u_trial, np.zeros_like(u_n), trial)
+            history = extract_prism_history(path)
+
+        self.assertEqual(history.formulation, "hex8_fbar")
+        self.assertEqual(len(history.time), 2)
+        self.assertAlmostEqual(history.material_J_minimum[-1], np.linalg.det(deformation))
+        self.assertAlmostEqual(history.material_J_maximum[-1], np.linalg.det(deformation))
+        self.assertGreater(history.maximum_equivalent_plastic_strain[-1], 0.0)
+        comparison = compare_prism_histories(history, history)
+        for sample in comparison["samples"]:
+            for field in sample["fields"].values():
+                self.assertEqual(field["candidate_minus_reference"], 0.0)
 
     def test_mandatory_event_union(self) -> None:
         deck = load_deck(ROOT / "examples/case_a_hex8.toml")

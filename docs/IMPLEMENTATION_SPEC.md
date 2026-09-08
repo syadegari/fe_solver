@@ -991,6 +991,12 @@ max_attempts_per_increment = 12
 
 After an accepted step, growth is allowed only by the configured policy and is capped at `dt_max`. After failure, multiply the proposed step by `cutback_factor`. Every attempted endpoint is then clipped to the next mandatory event.
 
+`nonlinear.max_iterations` limits Newton iterations within one attempted endpoint. In contrast,
+`max_attempts_per_increment` limits the initial attempt plus recoverable-failure retries from the same committed time.
+It is a termination guard and does not itself initiate cutback. A converged attempt is accepted even when its Newton
+count is high; the v1 controller has no separate policy that rejects or shrinks the next step after a slow-but-converged
+attempt.
+
 ### 18.4 Cutback
 
 On recoverable failure:
@@ -1517,11 +1523,19 @@ Use 50 base load increments and save exact states at end elongations 1 through 7
 
 The published target radial displacement at 7 mm half-model elongation is approximately `-3.740 mm`; the cited ANSYS 3D discretization reports approximately `-3.801 mm`. Record both as external references. Because that model uses a reduced-integration mixed element rather than this solver's F-bar element, require a two-level mesh-convergence study before adopting a numerical tolerance. The helper `verification/check_j2_necking.py` reports the complete observable history and enables an explicit reference-tolerance check when requested.
 
-### 23.6 Small J2 square-prism diagnostic
+### 23.6 Small J2 square-prism diagnostic and standard-Hex8 control
 
-Maintain a cheap qualitative companion to Case E for nonlinear-solver diagnosis. It uses the same half-length, material, axial grading, 1.8% linear middle imperfection, symmetry conditions, and 7 mm end displacement, but replaces the quarter circle by a quarter square with two elements in each transverse direction and 24 axial layers: 96 Hex8-Fbar elements total. Choose the end half-width `R sqrt(pi)/2`, so the complete square has the same end area as the reference circle. This case is not a substitute for the circular benchmark and has no published displacement target; its purposes are to reproduce plastic localization and exercise Newton globalization quickly.
+Maintain a smaller qualitative companion to Case E for nonlinear-solver diagnosis. It uses the same half-length, material, axial grading, 1.8% linear middle imperfection, symmetry conditions, and 7 mm end displacement, but replaces the quarter circle by a quarter square with two elements in each transverse direction and 24 axial layers: 96 Hex8-Fbar elements total. Choose the end half-width `R sqrt(pi)/2`, so the complete square has the same end area as the reference circle. This case is not a substitute for the circular benchmark and has no published displacement target; its purposes are to reproduce plastic localization and exercise Newton globalization at substantially lower cost than the circular mesh.
 
-Use residual-based backtracking for both J2 necking decks. The diagnostic utilities must support (a) material and element tangent checks using evolved Gauss-point states from restart/output data and (b) dense null-space/SVD inspection of the reduced tangent only for this deliberately small model. Dense matrices remain prohibited in the production solver.
+Maintain a paired standard full-integration Hex8 control deck on the identical mesh. Its analysis data must differ from
+the Hex8-Fbar deck only in analysis name, element formulation, and output directory. It is an unstabilized control for
+assessing volumetric locking, not an alternative reference result. Compare force--elongation response, load maximum,
+middle-section width, axial localization of equivalent plastic strain, raw and material-seen Jacobian ranges,
+cross-section variation of mean Cauchy stress, Newton effort, line-search effort, and cutbacks. A coarse-mesh difference
+may identify a problem but cannot establish convergence; quantitative conclusions require at least one paired mesh
+refinement.
+
+Use residual-based backtracking for all supplied J2 necking decks. The diagnostic utilities must support (a) material and element tangent checks using evolved Gauss-point states from restart/output data, (b) extraction and direct comparison of the two small-prism formulations, and (c) dense null-space/SVD inspection of the reduced tangent only for this deliberately small model. Dense matrices remain prohibited in the production solver.
 
 ---
 

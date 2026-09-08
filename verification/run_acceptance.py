@@ -26,8 +26,14 @@ DEFAULT_DECKS = [
 AVAILABLE_DECKS = [
     *DEFAULT_DECKS,
     "j2_necking_bar_hex8_fbar.toml",
+    "j2_necking_prism_small_hex8.toml",
     "j2_necking_prism_small_hex8_fbar.toml",
 ]
+J2_NECKING_DECKS = {
+    "j2_necking_bar_hex8_fbar.toml",
+    "j2_necking_prism_small_hex8.toml",
+    "j2_necking_prism_small_hex8_fbar.toml",
+}
 
 
 def run_deck(name: str, output_root: Path) -> AnalysisResult:
@@ -55,7 +61,7 @@ def main() -> None:
             "total_cutbacks": sum(item.cutbacks for item in result.increments),
             **result.verification,
         }
-        if name != "j2_necking_bar_hex8_fbar.toml" and summary[name]["total_cutbacks"] != 0:
+        if name not in J2_NECKING_DECKS and summary[name]["total_cutbacks"] != 0:
             raise RuntimeError(f"acceptance deck {name} required an unintended cutback")
 
     if "j2_necking_bar_hex8_fbar.toml" in results:

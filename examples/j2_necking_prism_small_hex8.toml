@@ -1,0 +1,102 @@
+[analysis]
+name = "j2_necking_prism_small_hex8"
+t_start = 0.0
+t_end = 1.0
+
+[mesh]
+file = "necking_prism_small_hex8.msh"
+format = "gmsh_msh41"
+
+[time]
+dt_initial = 0.02
+dt_min = 1.0e-6
+dt_max = 0.02
+cutback_factor = 0.5
+growth_factor = 1.25
+grow_if_newton_iterations_le = 5
+max_attempts_per_increment = 20
+
+[nonlinear]
+method = "newton"
+line_search = "backtracking"
+line_search_reduction = 0.5
+line_search_armijo = 1.0e-4
+line_search_min_alpha = 1.0e-4
+line_search_max_backtracks = 14
+max_iterations = 30
+force_rtol = 1.0e-8
+force_atol = 1.0e-6
+constraint_rtol = 1.0e-10
+constraint_atol = 1.0e-10
+check_displacement_increment = true
+displacement_rtol = 1.0e-9
+displacement_atol = 1.0e-10
+
+[linear_solver]
+backend = "scipy_splu"
+ordering = "COLAMD"
+singular_policy = "diagnose_and_abort"
+
+[[curves]]
+name = "elongation"
+points = [[0.0, 0.0], [1.0, 7.0]]
+
+[[materials]]
+name = "voce_steel"
+model = "j2_plasticity"
+[materials.properties]
+shear_modulus = 80193.8
+bulk_modulus = 164210.0
+initial_yield_stress = 450.0
+linear_hardening_modulus = 129.24
+saturation_increment = 265.0
+saturation_rate = 16.93
+
+[[element_assignments]]
+region = "solid"
+formulation = "hex8"
+material = "voce_steel"
+
+[[constraints.prescribed]]
+name = "symmetry_x"
+region = "symmetry_x"
+components = ["x"]
+value = 0.0
+
+[[constraints.prescribed]]
+name = "symmetry_y"
+region = "symmetry_y"
+components = ["y"]
+value = 0.0
+
+[[constraints.prescribed]]
+name = "middle_plane"
+region = "midplane"
+components = ["z"]
+value = 0.0
+
+[[constraints.prescribed]]
+name = "end_elongation"
+region = "loaded_end"
+components = ["z"]
+value = {curve = "elongation"}
+
+[output]
+directory = "results/j2_necking_prism_small_hex8"
+interval = 0.02
+explicit_times = [0.4, 0.45, 0.5, 0.6, 0.8, 1.0]
+database = "run.h5"
+history_file = "run_log.json"
+
+[restart]
+enabled = true
+interval = 0.1
+explicit_times = [0.4, 0.5, 1.0]
+keep_last = 3
+restart_from = ""
+
+[verification]
+require_positive_J = true
+check_global_force_balance = true
+check_element_directional_tangent = false
+check_global_directional_tangent = false
