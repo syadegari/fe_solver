@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter_ns
 
 import numpy as np
 from scipy import sparse
 
 from .config import Deck, component_index, value_expression
 from .elements import evaluate_element
+from .execution import ElementExecutor, ElementWorkItem
 from .materials import material_definition
 from .mesh import Mesh
 from .quadrature import HEX20_POINTS, HEX20_WEIGHTS, HEX8_POINTS, HEX8_WEIGHTS
 from .shape import hex20_shape, hex8_shape
 from .types import (
-    ElementRequest,
     FailureKind,
     GaussOutput,
     MaterialDefinition,
@@ -45,6 +46,14 @@ class AssemblyResult:
     K: sparse.csr_matrix | None
     state_trial: list[np.ndarray]
     gauss_output: list[list[GaussOutput]]
+    timing: "AssemblyTiming | None" = None
+
+
+@dataclass(frozen=True)
+class AssemblyTiming:
+    total_wall_seconds: float
+    element_phase_wall_seconds: float
+    sparse_finalize_wall_seconds: float
 
 
 def build_model(deck: Deck, mesh: Mesh) -> FEModel:
@@ -124,47 +133,94 @@ def assemble_internal(
     t_n: float,
     t_np1: float,
     need_tangent: bool,
+    *,
+    element_executor: ElementExecutor | None = None,
+    collect_timing: bool = False,
 ) -> AssemblyResult:
+    assembly_start = perf_counter_ns()
     ndof = model.mesh.ndof
     f_int = np.zeros(ndof)
     rows: list[np.ndarray] = []
     cols: list[np.ndarray] = []
     values: list[np.ndarray] = []
-    states: list[np.ndarray] = []
-    all_outputs: list[list[GaussOutput]] = []
-    for block in model.blocks:
-        state_trial = np.empty_like(block.state_n)
-        block_outputs: list[GaussOutput] = []
+    states = [np.empty_like(block.state_n) for block in model.blocks]
+    all_outputs: list[list[GaussOutput]] = [[] for _ in model.blocks]
+    work: list[ElementWorkItem] = []
+    for block_index, block in enumerate(model.blocks):
         for e, conn in enumerate(block.connectivity):
             dofs = element_dofs(conn)
-            response = evaluate_element(
-                ElementRequest(
-                    model.mesh.X[conn], u_n[dofs], u_trial[dofs], block.state_n[e], block.material,
-                    None, t_n, t_np1, need_tangent, block.formulation,
+            work.append(
+                ElementWorkItem(
+                    block_index,
+                    e,
+                    model.mesh.X[conn],
+                    u_n[dofs],
+                    u_trial[dofs],
+                    block.state_n[e],
+                    None,
+                    t_n,
+                    t_np1,
+                    need_tangent,
+                    block.formulation,
                 )
             )
-            if not response.status.ok:
+
+    element_start = perf_counter_ns()
+    responses = (
+        element_executor.evaluate(work)
+        if element_executor is not None
+        else (
+            evaluate_element(item.request(model.blocks[item.block_index].material))
+            for item in work
+        )
+    )
+    deferred_failure: tuple[FailureKind, str] | None = None
+    for item, response in zip(work, responses):
+        block = model.blocks[item.block_index]
+        e = item.element_index
+        conn = block.connectivity[e]
+        dofs = element_dofs(conn)
+        if not response.status.ok:
+            message = f"element {int(block.element_tags[e])}: {response.status.message}"
+            if element_executor is None or not element_executor.parallel:
                 if response.status.kind is FailureKind.FATAL:
-                    raise ModelError(f"element {int(block.element_tags[e])}: {response.status.message}")
-                raise RecoverableError(f"element {int(block.element_tags[e])}: {response.status.message}")
-            f_int[dofs] += response.f_int
-            state_trial[e] = response.state_trial
-            if response.gauss_output is not None:
-                block_outputs.append(response.gauss_output)
-            if need_tangent:
-                assert response.K is not None
-                rows.append(np.repeat(dofs, len(dofs)))
-                cols.append(np.tile(dofs, len(dofs)))
-                values.append(response.K.ravel())
-        states.append(state_trial)
-        all_outputs.append(block_outputs)
+                    raise ModelError(message)
+                raise RecoverableError(message)
+            if deferred_failure is None:
+                deferred_failure = response.status.kind, message
+            continue
+        f_int[dofs] += response.f_int
+        states[item.block_index][e] = response.state_trial
+        if response.gauss_output is not None:
+            all_outputs[item.block_index].append(response.gauss_output)
+        if need_tangent:
+            assert response.K is not None
+            rows.append(np.repeat(dofs, len(dofs)))
+            cols.append(np.tile(dofs, len(dofs)))
+            values.append(response.K.ravel())
+    if deferred_failure is not None:
+        kind, message = deferred_failure
+        if kind is FailureKind.FATAL:
+            raise ModelError(message)
+        raise RecoverableError(message)
+    element_end = perf_counter_ns()
+
+    sparse_start = perf_counter_ns()
     K = None
     if need_tangent:
         K = sparse.coo_matrix(
             (np.concatenate(values), (np.concatenate(rows), np.concatenate(cols))), shape=(ndof, ndof)
         ).tocsr()
         K.sum_duplicates()
-    return AssemblyResult(f_int, K, states, all_outputs)
+    sparse_end = perf_counter_ns()
+    timing = None
+    if collect_timing:
+        timing = AssemblyTiming(
+            (sparse_end - assembly_start) * 1.0e-9,
+            (element_end - element_start) * 1.0e-9,
+            (sparse_end - sparse_start) * 1.0e-9,
+        )
+    return AssemblyResult(f_int, K, states, all_outputs, timing)
 
 
 def assemble_external(model: FEModel, t: float) -> np.ndarray:

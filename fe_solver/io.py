@@ -284,9 +284,19 @@ class HDF5ResultWriter:
         self.close()
 
 
-def write_run_log(path: Path, increments: list[Any], newton_history: list[dict], verification: dict) -> None:
+def write_run_log(
+    path: Path,
+    increments: list[Any],
+    newton_history: list[dict],
+    verification: dict,
+    execution: dict[str, object] | None = None,
+    timing: dict[str, float] | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "schema_version": 2,
+        "execution": execution or {},
+        "timing": timing or {},
         "increments": [asdict(item) for item in increments],
         "newton_history": newton_history,
         "verification": verification,

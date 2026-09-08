@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter_ns
 from typing import Callable
 import warnings
 
@@ -18,6 +19,7 @@ from .assembly import (
 )
 from .config import Deck
 from .constraints import ConstraintSystem
+from .execution import ElementExecutor
 from .io import HDF5ResultWriter, load_restart, write_restart, write_run_log
 from .preprocess import PreparedAnalysis, prepare_analysis
 from .types import ModelError, RecoverableError
@@ -42,6 +44,8 @@ class AnalysisResult:
     increments: list[IncrementRecord] = field(default_factory=list)
     newton_history: list[dict] = field(default_factory=list)
     verification: dict[str, float] = field(default_factory=dict)
+    execution: dict[str, object] = field(default_factory=dict)
+    timing: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -95,6 +99,8 @@ def _newton_attempt(
     t_np1: float,
     history: list[dict],
     iteration_observer: Callable[[dict, AssemblyResult], None] | None = None,
+    element_executor: ElementExecutor | None = None,
+    debug_timing: bool = False,
 ) -> _NewtonResult:
     controls = model.deck.data["nonlinear"]
     method = str(controls.get("method", "newton"))
@@ -130,11 +136,25 @@ def _newton_attempt(
     ordering = str(model.deck.data["linear_solver"].get("ordering", "COLAMD"))
 
     for iteration in range(max_iterations + 1):
+        iteration_start = perf_counter_ns()
         refresh = method == "newton" or iteration == 0
+        assembly_wall_seconds = 0.0
+        assembly_reused = pending_assembly is not None
         if pending_assembly is None:
+            assembly_start = perf_counter_ns()
             try:
-                assembly = assemble_internal(model, u_n, u, t_n, t_np1, refresh)
+                assembly = assemble_internal(
+                    model,
+                    u_n,
+                    u,
+                    t_n,
+                    t_np1,
+                    refresh,
+                    element_executor=element_executor,
+                    collect_timing=debug_timing,
+                )
             except RecoverableError as exc:
+                assembly_wall_seconds = (perf_counter_ns() - assembly_start) * 1.0e-9
                 history.append(
                     {
                         "t_n": t_n,
@@ -142,9 +162,15 @@ def _newton_attempt(
                         "iteration": iteration,
                         "failure_kind": "recoverable",
                         "failure_message": str(exc),
+                        "assembly_wall_seconds": assembly_wall_seconds,
+                        "line_search_assembly_wall_seconds": 0.0,
+                        "kkt_factorization_wall_seconds": 0.0,
+                        "kkt_solve_wall_seconds": 0.0,
+                        "iteration_wall_seconds": (perf_counter_ns() - iteration_start) * 1.0e-9,
                     }
                 )
                 raise
+            assembly_wall_seconds = (perf_counter_ns() - assembly_start) * 1.0e-9
         else:
             assembly = pending_assembly
             pending_assembly = None
@@ -165,80 +191,123 @@ def _newton_attempt(
             "force_residual_inf": _inf_norm(r_u), "force_tolerance": force_tol,
             "constraint_residual_inf": _inf_norm(r_c), "constraint_tolerance": constraint_tol,
             "displacement_increment_inf": _inf_norm(last_du),
+            "assembly_wall_seconds": assembly_wall_seconds,
+            "assembly_reused_from_line_search": assembly_reused,
+            "line_search_assembly_wall_seconds": 0.0,
+            "kkt_factorization_wall_seconds": 0.0,
+            "kkt_solve_wall_seconds": 0.0,
         }
+        if debug_timing:
+            record["element_phase_wall_seconds"] = (
+                0.0 if assembly_reused or assembly.timing is None
+                else assembly.timing.element_phase_wall_seconds
+            )
+            record["sparse_finalize_wall_seconds"] = (
+                0.0 if assembly_reused or assembly.timing is None
+                else assembly.timing.sparse_finalize_wall_seconds
+            )
         history.append(record)
         if iteration_observer is not None:
             iteration_observer(record, assembly)
-        if residual_ok and displacement_ok:
-            return _NewtonResult(u, lambdas, assembly, iteration)
-        if iteration == max_iterations:
-            break
-        if refresh:
-            assert assembly.K is not None
-            frozen_K = assembly.K
-            factor = _factor_kkt(frozen_K, C, ordering)
-        assert factor is not None
-        correction = factor.solve(-np.concatenate([np.asarray(r_u), np.asarray(r_c)]))
-        if not np.all(np.isfinite(correction)):
-            raise ModelError("KKT solve returned a non-finite correction")
-        delta_u = correction[:model.mesh.ndof]
-        delta_lambda = correction[model.mesh.ndof:]
-        if line_search == "none":
-            last_du = delta_u
-            u += delta_u
-            lambdas += delta_lambda
-            continue
-
-        # Trial every candidate from the same committed material state.  Invalid
-        # intermediate configurations reject only the candidate, not the increment.
-        base_merit = _scaled_residual_merit(r_u, r_c, force_tol, constraint_tol)
-        alpha = 1.0
-        candidate_failures: list[str] = []
-        accepted = False
-        attempted_candidates = 0
-        for backtrack in range(line_search_max_backtracks + 1):
-            if alpha < line_search_min_alpha:
+        try:
+            if residual_ok and displacement_ok:
+                return _NewtonResult(u, lambdas, assembly, iteration)
+            if iteration == max_iterations:
                 break
-            attempted_candidates += 1
-            candidate_u = u + alpha * delta_u
-            candidate_lambdas = lambdas + alpha * delta_lambda
-            try:
-                candidate = assemble_internal(
-                    model, u_n, candidate_u, t_n, t_np1, method == "newton"
-                )
-            except RecoverableError as exc:
-                candidate_failures.append(str(exc))
-            else:
-                candidate_r_u = candidate.f_int - f_ext + C.T @ candidate_lambdas
-                candidate_r_c = C @ candidate_u - d
-                candidate_merit = _scaled_residual_merit(
-                    candidate_r_u, candidate_r_c, force_tol, constraint_tol
-                )
-                if candidate_merit <= (1.0 - line_search_armijo * alpha) * base_merit:
-                    u = candidate_u
-                    lambdas = candidate_lambdas
-                    last_du = alpha * delta_u
-                    record["line_search_alpha"] = alpha
-                    record["line_search_backtracks"] = backtrack
-                    record["line_search_trials"] = attempted_candidates
-                    record["line_search_merit"] = candidate_merit
-                    record["line_search_recoverable_rejections"] = len(candidate_failures)
-                    if candidate_failures:
-                        record["line_search_last_failure"] = candidate_failures[-1]
-                    pending_assembly = candidate
-                    accepted = True
+            if refresh:
+                assert assembly.K is not None
+                frozen_K = assembly.K
+                factor_start = perf_counter_ns()
+                factor = _factor_kkt(frozen_K, C, ordering)
+                record["kkt_factorization_wall_seconds"] = (
+                    perf_counter_ns() - factor_start
+                ) * 1.0e-9
+            assert factor is not None
+            solve_start = perf_counter_ns()
+            correction = factor.solve(-np.concatenate([np.asarray(r_u), np.asarray(r_c)]))
+            record["kkt_solve_wall_seconds"] = (perf_counter_ns() - solve_start) * 1.0e-9
+            if not np.all(np.isfinite(correction)):
+                raise ModelError("KKT solve returned a non-finite correction")
+            delta_u = correction[:model.mesh.ndof]
+            delta_lambda = correction[model.mesh.ndof:]
+            if line_search == "none":
+                last_du = delta_u
+                u += delta_u
+                lambdas += delta_lambda
+                continue
+
+            # Trial every candidate from the same committed material state.  Invalid
+            # intermediate configurations reject only the candidate, not the increment.
+            base_merit = _scaled_residual_merit(r_u, r_c, force_tol, constraint_tol)
+            alpha = 1.0
+            candidate_failures: list[str] = []
+            accepted = False
+            attempted_candidates = 0
+            line_search_element_seconds = 0.0
+            line_search_sparse_seconds = 0.0
+            for backtrack in range(line_search_max_backtracks + 1):
+                if alpha < line_search_min_alpha:
                     break
-            alpha *= line_search_reduction
-        if not accepted:
-            record["line_search_alpha"] = None
-            record["line_search_backtracks"] = attempted_candidates
-            record["line_search_trials"] = attempted_candidates
-            record["line_search_recoverable_rejections"] = len(candidate_failures)
-            if candidate_failures:
-                record["line_search_last_failure"] = candidate_failures[-1]
-            raise RecoverableError(
-                "Newton line search could not find an admissible residual-reducing step"
-            )
+                attempted_candidates += 1
+                candidate_u = u + alpha * delta_u
+                candidate_lambdas = lambdas + alpha * delta_lambda
+                candidate_start = perf_counter_ns()
+                try:
+                    candidate = assemble_internal(
+                        model,
+                        u_n,
+                        candidate_u,
+                        t_n,
+                        t_np1,
+                        method == "newton",
+                        element_executor=element_executor,
+                        collect_timing=debug_timing,
+                    )
+                except RecoverableError as exc:
+                    candidate_failures.append(str(exc))
+                else:
+                    if debug_timing and candidate.timing is not None:
+                        line_search_element_seconds += candidate.timing.element_phase_wall_seconds
+                        line_search_sparse_seconds += candidate.timing.sparse_finalize_wall_seconds
+                    candidate_r_u = candidate.f_int - f_ext + C.T @ candidate_lambdas
+                    candidate_r_c = C @ candidate_u - d
+                    candidate_merit = _scaled_residual_merit(
+                        candidate_r_u, candidate_r_c, force_tol, constraint_tol
+                    )
+                    if candidate_merit <= (1.0 - line_search_armijo * alpha) * base_merit:
+                        u = candidate_u
+                        lambdas = candidate_lambdas
+                        last_du = alpha * delta_u
+                        record["line_search_alpha"] = alpha
+                        record["line_search_backtracks"] = backtrack
+                        record["line_search_trials"] = attempted_candidates
+                        record["line_search_merit"] = candidate_merit
+                        record["line_search_recoverable_rejections"] = len(candidate_failures)
+                        if candidate_failures:
+                            record["line_search_last_failure"] = candidate_failures[-1]
+                        pending_assembly = candidate
+                        accepted = True
+                        break
+                finally:
+                    record["line_search_assembly_wall_seconds"] += (
+                        perf_counter_ns() - candidate_start
+                    ) * 1.0e-9
+                alpha *= line_search_reduction
+            if debug_timing:
+                record["line_search_element_phase_wall_seconds"] = line_search_element_seconds
+                record["line_search_sparse_finalize_wall_seconds"] = line_search_sparse_seconds
+            if not accepted:
+                record["line_search_alpha"] = None
+                record["line_search_backtracks"] = attempted_candidates
+                record["line_search_trials"] = attempted_candidates
+                record["line_search_recoverable_rejections"] = len(candidate_failures)
+                if candidate_failures:
+                    record["line_search_last_failure"] = candidate_failures[-1]
+                raise RecoverableError(
+                    "Newton line search could not find an admissible residual-reducing step"
+                )
+        finally:
+            record["iteration_wall_seconds"] = (perf_counter_ns() - iteration_start) * 1.0e-9
     assert final_assembly is not None
     raise RecoverableError(f"global Newton failed in {max_iterations} iterations")
 
@@ -248,8 +317,13 @@ def _matches(t: float, values: set[float], tol: float) -> bool:
 
 
 def run_analysis(
-    deck_or_path: PreparedAnalysis | Deck | str | Path, *, stop_time: float | None = None
+    deck_or_path: PreparedAnalysis | Deck | str | Path,
+    *,
+    stop_time: float | None = None,
+    num_processes: int = 1,
+    debug_timing: bool = False,
 ) -> AnalysisResult:
+    analysis_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
     deck = prepared.deck
     mesh = prepared.mesh
@@ -278,7 +352,6 @@ def run_analysis(
     if t_n > t_end + tol_time:
         raise ModelError("restart time is beyond the requested analysis endpoint")
 
-    result = AnalysisResult(model, constraints, t_n, u_n, lambda_n)
     output_dir = deck.resolve(str(deck.data["output"]["directory"]))
     database_path = output_dir / str(deck.data["output"].get("database", "run.h5"))
     log_path = output_dir / str(deck.data["output"].get("history_file", "run_log.json"))
@@ -294,9 +367,42 @@ def run_analysis(
     ):
         raise ModelError("invalid pseudo-time controller parameters")
     restart_index = sum(value <= t_n + tol_time for value in restart_times)
-    writer = HDF5ResultWriter(database_path, model, resume=bool(restart_from))
+    executor = ElementExecutor(
+        (block.material for block in model.blocks),
+        sum(len(block.connectivity) for block in model.blocks),
+        num_processes,
+    )
+    print(executor.describe())
+    result = AnalysisResult(
+        model,
+        constraints,
+        t_n,
+        u_n,
+        lambda_n,
+        execution=executor.info.as_dict(),
+    )
+    writer: HDF5ResultWriter | None = None
     try:
-        initial_assembly = assemble_internal(model, u_n, u_n, t_n, t_n, False)
+        writer = HDF5ResultWriter(database_path, model, resume=bool(restart_from))
+        result.timing["elapsed_wall_seconds"] = (perf_counter_ns() - analysis_start) * 1.0e-9
+        write_run_log(
+            log_path,
+            result.increments,
+            result.newton_history,
+            result.verification,
+            result.execution,
+            result.timing,
+        )
+        initial_assembly = assemble_internal(
+            model,
+            u_n,
+            u_n,
+            t_n,
+            t_n,
+            False,
+            element_executor=executor,
+            collect_timing=debug_timing,
+        )
         writer.append(t_n, u_n, np.asarray(-constraints.C.T @ lambda_n), initial_assembly)
         while t_n < t_end - tol_time:
             future_events = events[events > t_n + tol_time]
@@ -317,7 +423,15 @@ def run_analysis(
                     t_trial = next_event
                 try:
                     trial = _newton_attempt(
-                        model, constraints, u_n, lambda_n, t_n, t_trial, result.newton_history
+                        model,
+                        constraints,
+                        u_n,
+                        lambda_n,
+                        t_n,
+                        t_trial,
+                        result.newton_history,
+                        element_executor=executor,
+                        debug_timing=debug_timing,
                     )
                 except RecoverableError:
                     cutbacks += 1
@@ -348,11 +462,38 @@ def run_analysis(
                         files = sorted(restart_dir.glob("restart_*.h5"))
                         for obsolete in files[:-keep_last]:
                             obsolete.unlink()
-                write_run_log(log_path, result.increments, result.newton_history, result.verification)
+                result.timing["elapsed_wall_seconds"] = (
+                    perf_counter_ns() - analysis_start
+                ) * 1.0e-9
+                write_run_log(
+                    log_path,
+                    result.increments,
+                    result.newton_history,
+                    result.verification,
+                    result.execution,
+                    result.timing,
+                )
                 break
         from .verification import verify_analysis
-        result.verification = verify_analysis(model, constraints, result.t, result.u, result.lambdas)
-        write_run_log(log_path, result.increments, result.newton_history, result.verification)
+        result.verification = verify_analysis(
+            model,
+            constraints,
+            result.t,
+            result.u,
+            result.lambdas,
+            element_executor=executor,
+        )
+        result.timing["elapsed_wall_seconds"] = (perf_counter_ns() - analysis_start) * 1.0e-9
+        write_run_log(
+            log_path,
+            result.increments,
+            result.newton_history,
+            result.verification,
+            result.execution,
+            result.timing,
+        )
         return result
     finally:
-        writer.close()
+        if writer is not None:
+            writer.close()
+        executor.close()

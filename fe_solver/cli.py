@@ -19,6 +19,14 @@ def main(argv: list[str] | None = None) -> None:
     solve = commands.add_parser("solve", help="preprocess and solve a TOML analysis deck")
     solve.add_argument("deck", help="path to a TOML analysis deck")
     solve.add_argument("--stop-time", type=float, default=None)
+    solve.add_argument(
+        "--num-processes", type=int, default=1,
+        help="persistent worker processes for complete element evaluations (default: 1)",
+    )
+    solve.add_argument(
+        "--debug-timing", action="store_true",
+        help="record detailed element, sparse-finalization, and line-search timings",
+    )
     post = commands.add_parser("postprocess", help="create temporal XDMF from a run database")
     post.add_argument("database", type=Path, help="path to run.h5")
     post.add_argument("--output", type=Path, default=None, help="output .xdmf path")
@@ -28,7 +36,12 @@ def main(argv: list[str] | None = None) -> None:
             output = write_xdmf(args.database, args.output)
             print(f"wrote {output}")
             return
-        result = run_analysis(args.deck, stop_time=args.stop_time)
+        result = run_analysis(
+            args.deck,
+            stop_time=args.stop_time,
+            num_processes=args.num_processes,
+            debug_timing=args.debug_timing,
+        )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")
     print(

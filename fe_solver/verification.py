@@ -6,6 +6,7 @@ from scipy import sparse
 from .assembly import FEModel, assemble_external, assemble_internal, element_dofs
 from .constraints import ConstraintSystem, macro_deformation_function
 from .elements import evaluate_element
+from .execution import ElementExecutor
 from .quadrature import HEX20_POINTS, HEX20_WEIGHTS, HEX8_POINTS, HEX8_WEIGHTS
 from .shape import hex20_shape, hex8_shape
 from .types import ElementRequest, ModelError
@@ -27,10 +28,12 @@ def verify_analysis(
     t: float,
     u: np.ndarray,
     lambdas: np.ndarray,
+    *,
+    element_executor: ElementExecutor | None = None,
 ) -> dict[str, float]:
     options = model.deck.data.get("verification", {})
     summary: dict[str, float] = {}
-    base = assemble_internal(model, u, u, t, t, True)
+    base = assemble_internal(model, u, u, t, t, True, element_executor=element_executor)
     f_ext = assemble_external(model, t)
     r_u = base.f_int - f_ext + constraints.C.T @ lambdas
     r_c = constraints.C @ u - constraints.rhs(t)
@@ -168,7 +171,9 @@ def verify_analysis(
         eps = 1.0e-7 * max(1.0, _inf(u))
 
         def residual(displacement: np.ndarray, multipliers: np.ndarray) -> np.ndarray:
-            assembled = assemble_internal(model, u, displacement, t, t, False)
+            assembled = assemble_internal(
+                model, u, displacement, t, t, False, element_executor=element_executor
+            )
             return np.concatenate(
                 [assembled.f_int - f_ext + constraints.C.T @ multipliers,
                  constraints.C @ displacement - constraints.rhs(t)]

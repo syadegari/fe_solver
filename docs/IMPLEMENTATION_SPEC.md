@@ -693,6 +693,31 @@ Recommended prototype assembly path:
 
 Do not densify the global stiffness except in deliberately tiny unit tests.
 
+### 13.1 Local process parallelism
+
+Element kernels may execute in a local process pool. The unit of submitted work is one complete element, not one
+quadrature point: the worker gathers all quadrature-point material updates, the element residual, the element tangent,
+and the trial state into one element response. Consequently, the Hex8-Fbar centroid quantities and projection chain
+rule remain private to one element invocation and use the same material-point API as the serial path.
+
+Create a fixed pool once per analysis and reuse it for initial output, every Newton and line-search assembly, and final
+verification. `--num-processes N` is a command-line execution choice with default `N=1`; it is not part of the TOML
+model definition or restart identity. Never select all available CPUs implicitly. Report the requested and effective
+process counts and the available physical/logical CPU counts so the user can choose an appropriate value. The effective
+count may be reduced to the number of elements. Limit numerical-library thread pools to one thread inside each element
+worker to avoid nested oversubscription; global sparse-solver threading is outside this v1 parallelization.
+
+Workers receive serializable element-local copies and return element responses. They do not mutate the mesh, global
+vectors/matrices, committed material state, result database, or JSON log. The parent consumes responses in the original
+block/element order, adds the element force to the dense global vector, and appends stiffness COO triplets in that same
+order. Workers may finish out of order, but deterministic parent-side reduction preserves the serial floating-point
+summation order and avoids solver-path changes caused only by completion timing. A recoverable element failure must
+leave committed state unchanged and the persistent pool usable by the next line-search candidate or cutback attempt.
+
+Use `forkserver` where available and otherwise `spawn`; material routines used with multiple processes must therefore
+be importable and material properties must be serializable. Keep the single-process path available for reference runs,
+debugging, and models for which process transfer overhead exceeds element-kernel work.
+
 ---
 
 ## 14. General affine displacement constraints
@@ -1197,6 +1222,21 @@ cell. Store curves so reported fields can be correlated with prescribed historie
 later RVE homogenization. Newton residuals,
 tolerances, cutback attempts, and verification summaries belong in the standalone JSON run log, not the field database.
 
+The JSON log also records execution and performance telemetry. Its top-level `execution` object contains the element
+backend, requested/effective process counts, available physical/logical CPU counts, process start method, and worker
+BLAS thread limit. `timing.elapsed_wall_seconds` measures the run through the latest durable log update. Every ordinary
+Newton record contains `iteration_wall_seconds`, `assembly_wall_seconds`, `line_search_assembly_wall_seconds`,
+`kkt_factorization_wall_seconds`, and `kkt_solve_wall_seconds`. Line-search assembly time is the sum over attempted
+candidates; when an accepted candidate assembly is reused by the next exact-Newton iteration, that next record marks
+`assembly_reused_from_line_search=true` and reports zero new primary assembly time.
+
+The optional `--debug-timing` switch additionally records `element_phase_wall_seconds` and
+`sparse_finalize_wall_seconds`. The former starts after element work items have been gathered and includes element
+evaluation/IPC plus ordered parent reduction; the latter covers COO construction, duplicate summation, and CSR
+conversion. When backtracking is active, the analogous `line_search_element_phase_wall_seconds` and
+`line_search_sparse_finalize_wall_seconds` are accumulated across successful candidate assemblies. These timers are
+diagnostic wall-clock observations, not reproducible numerical results or convergence criteria.
+
 Result schema version 3 stores symmetric stress and strain in the order `[11,22,33,12,23,13]`, with **tensorial**
 shear entries (no factor of two). Store dataset attributes `component_order` (six strings), `shear_convention="tensorial"`,
 and `shear_scale=1.0`. Internal element tensors and engineering-shear assembly vectors are unchanged; pack only at
@@ -1310,6 +1350,9 @@ postprocessing output.
    Keep `C`, `d`, external loading, and pseudo-time fixed during this perturbation.
 13. Restart equivalence.
 14. Cutback/rollback test with deliberately forced recoverable failure.
+15. For Hex8, Hex8-Fbar, Hex20, and a stateful J2/F-bar update, compare serial and two-process element responses,
+    assembled residual/tangent, and trial state to machine precision. Exercise more than one assembly through the same
+    pool and verify that a recoverable failure leaves committed state unchanged and does not poison the pool.
 
 ---
 

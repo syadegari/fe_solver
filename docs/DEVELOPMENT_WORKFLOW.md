@@ -41,6 +41,12 @@ For long, nonlinear, or open-ended calculations, Codex prepares a one-time scrip
 
 Keep full logs and large HDF5 artifacts on disk. Return only a concise status summary and relevant failure excerpts to the conversation. Independent cases may run concurrently, but each process must receive explicit BLAS/OpenMP thread limits to avoid oversubscribing the host.
 
+Within one solver run, `--num-processes` controls a persistent pool of complete-element workers and defaults to one.
+The solver reports both physical and logical CPU availability but never expands the pool automatically. For these
+CPU-bound kernels, start at or below the available physical-core count; treat simultaneous multithreading as an
+empirical tuning option rather than another full core. Element workers internally limit BLAS thread pools to one.
+This setting does not control or parallelize the global sparse KKT factorization in v1.
+
 Model switching remains a manual user action. Codex may recommend a less expensive model for routine inspection or a more capable model for difficult diagnosis, but no wrapper around the Codex application will be introduced at this stage.
 
 ## Deferred remote worker setup

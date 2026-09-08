@@ -41,6 +41,28 @@ python -m fe_solver examples/j2_necking_prism_small_hex8_fbar.toml
 For a controlled partial run, add `--stop-time 0.5`. Relative mesh and output paths are resolved from the deck directory.
 The explicit equivalent command is `python -m fe_solver solve DECK`.
 
+Element evaluation defaults to the serial reference path. To reuse two local worker processes throughout the solve:
+
+```bash
+python -m fe_solver examples/j2_necking_prism_small_hex8_fbar.toml --num-processes 2
+```
+
+The unit of work is one complete element; the solver does not create a process per element or per quadrature point.
+Worker completion may be unordered, while global force and stiffness reduction remains in mesh order for reproducible
+floating-point behavior. The startup message and `run_log.json` report requested/effective process counts and available
+physical/logical CPUs. The solver never chooses all CPUs automatically, and each worker limits nested BLAS pools to one
+thread. For CPU-bound element kernels, physical-core count is the conservative starting point; benchmark before using
+additional hardware threads. Add `--debug-timing` when detailed element-phase and sparse-finalization timings are needed.
+
+Compare two completed HDF5 runs, including all numerical result fields and metadata, with:
+
+```bash
+python -m verification.compare_run_databases REFERENCE_RUN_H5 CANDIDATE_RUN_H5
+```
+
+The comparison normalizes only the output-directory entry in the embedded input deck and ignores the expected
+Git-revision provenance difference; both exceptions are listed in its JSON report.
+
 Create one ParaView-readable temporal dataset after a run with:
 
 ```bash
@@ -113,7 +135,7 @@ The test suite uses the standard library runner, so no separate test dependency 
 python -m unittest discover -s tests -v
 ```
 
-It checks shape functions, material and element tangents, homogeneous F-bar equivalence, Gmsh periodic maps, spanning-tree constraints, nonsymmetric whole-KKT solves, event merging, restart compatibility, and forced-failure cutback/rollback.
+It checks shape functions, material and element tangents, homogeneous F-bar equivalence, Gmsh periodic maps, spanning-tree constraints, nonsymmetric whole-KKT solves, event merging, restart compatibility, forced-failure cutback/rollback, and serial-versus-process assembly equivalence.
 
 Run the complete regression and featured-example acceptance suite with:
 
@@ -142,6 +164,6 @@ This checks both XDMF3 reader variants at every saved time, all field components
 - `fe_solver/tangents.py`: shared material-to-spatial tangent transformation
 - `fe_solver/elements.py`: standard and F-bar element kernels
 - `fe_solver/mesh.py`, `constraints.py`: Gmsh import and affine constraints
-- `fe_solver/preprocess.py`, `assembly.py`, `solver.py`: validated setup, sparse assembly, and nonlinear solution
+- `fe_solver/preprocess.py`, `assembly.py`, `execution.py`, `solver.py`: validated setup, deterministic serial/process element execution, sparse assembly, and nonlinear solution
 - `fe_solver/io.py`, `config.py`: HDF5 result/restart I/O and TOML/event handling
 - `fe_solver/postprocess.py`: temporal XDMF construction from a completed HDF5 run
