@@ -1,5 +1,9 @@
 # J2 element-formulation study protocol
 
+The implementation and outstanding-run state was frozen before the J2 JIT
+feasibility investigation; see `FROZEN_STATE.md` for completed result
+fingerprints, remaining runs, and resumption rules.
+
 This study separates four numerical axes while keeping every unlisted input fixed. Case definitions are constructed from the checked-in square-prism or circular-bar base deck by `verification.run_j2_formulation_study`; they are not independent copies that can silently drift.
 
 ## Questions and comparisons
