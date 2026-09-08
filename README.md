@@ -23,7 +23,14 @@ python examples/generate_elongated_block_gmsh.py --element hex20 --out examples/
 python examples/generate_periodic_cube_gmsh.py --out examples/periodic_cube_8x8x8.msh
 python examples/generate_heterogeneous_periodic_cube_gmsh.py --out examples/heterogeneous_periodic_cube_8x8x8.msh
 python examples/generate_necking_bar_gmsh.py --out examples/necking_bar_quarter_hex8.msh
-python examples/generate_necking_prism_gmsh.py --out examples/necking_prism_small_hex8.msh
+python examples/generate_necking_bar_gmsh.py --core-divisions 8 --radial-divisions 6 --nz 48 \
+  --out examples/necking_bar_quarter_refined_hex8.msh
+python examples/generate_necking_prism_gmsh.py --element hex8 \
+  --out examples/necking_prism_small_hex8.msh
+python examples/generate_necking_prism_gmsh.py --element hex20 \
+  --out examples/necking_prism_small_hex20.msh
+python examples/generate_necking_prism_gmsh.py --element hex8 \
+  --nx 4 --ny 4 --nz 48 --out examples/necking_prism_refined_hex8.msh
 ```
 
 Run a deck from the repository root:
@@ -112,6 +119,8 @@ After solving, extract end reaction, middle radius, monitor-point radial displac
 
 ```bash
 python -m verification.check_j2_necking examples/results/j2_necking_bar_hex8_fbar/run.h5
+python -m verification.check_j2_necking examples/results/j2_necking_bar_hex8_fbar/run.h5 \
+  --plot /tmp/j2_necking_bar.png
 ```
 
 The HDF5 database stores the inverse plastic metric and equivalent plastic strain at element centroids. J2 equivalent stress is intentionally not stored because it can be calculated from the six Cauchy-stress components in ParaView.
@@ -135,6 +144,28 @@ and cross-section mean-stress variation. Its optional six-panel plot places the 
 diagnostics against prescribed end elongation. The standard Hex8 result is a locking control; convergence alone does
 not make it a reference solution. A plot from the first completed paired 96-element runs is retained under
 `verification/j2_prism_results/` as a qualitative regression artifact.
+
+The follow-on formulation study is expressed as orthogonal variants of that base deck rather than duplicated TOML
+files. List the cases with:
+
+```bash
+python -m verification.run_j2_formulation_study --list-cases
+```
+
+The matrix contains the completed 2x2x24 Hex8/Hex8-Fbar pair, a paired 4x4x48 mesh refinement, a coarse pair with the
+bulk modulus halved from 164210 to 82105 MPa, a 2x2x24 serendipity Hex20 case, and the 960/7680-element circular-bar
+mesh pair. The half-bulk case changes the elastic Poisson ratio from approximately 0.290 to 0.132 while retaining every
+shear/plastic parameter. Run one new case with, for example:
+
+```bash
+python -m verification.run_j2_formulation_study \
+  --case soft_bulk_hex8_fbar --num-processes 2 --debug-timing --stop-time 0.5
+```
+
+New variant outputs are isolated under `examples/results/j2_formulation_study/`; the three baseline cases reuse their
+existing result directories. Use `check_j2_prism` to compare any completed pair directly from HDF5; this avoids
+ParaView interpolation, warp scaling, camera, and color-range ambiguity. The refined cases are intentionally expensive
+and should use the long-run workflow rather than the ordinary test suite.
 
 Standalone material-point characterization and evolved-state tangent diagnostics are available through:
 

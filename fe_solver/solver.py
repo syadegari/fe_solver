@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from time import perf_counter_ns
 from typing import Callable
@@ -316,6 +317,41 @@ def _matches(t: float, values: set[float], tol: float) -> bool:
     return any(abs(t - value) <= tol for value in values)
 
 
+def _load_run_log_prefix(
+    path: Path,
+    restart_time: float,
+    analysis_start_time: float,
+    tolerance: float,
+) -> tuple[list[IncrementRecord], list[dict], float]:
+    if not path.is_file():
+        raise ModelError("cannot resume an existing results database without its run log")
+    try:
+        with path.open(encoding="utf-8") as stream:
+            payload = json.load(stream)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ModelError(f"cannot read run log {path}") from exc
+    try:
+        increments = [
+            IncrementRecord(**row)
+            for row in payload.get("increments", [])
+            if float(row["t_np1"]) <= restart_time + tolerance
+        ]
+        newton = [
+            row
+            for row in payload.get("newton_history", [])
+            if float(row["t_np1"]) <= restart_time + tolerance
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ModelError(f"run log {path} has invalid increment history") from exc
+    if restart_time > analysis_start_time + tolerance and (
+        not increments or abs(increments[-1].t_np1 - restart_time) > tolerance
+    ):
+        raise ModelError("run log has no accepted increment at the restart time")
+    elapsed_raw = payload.get("timing", {}).get("elapsed_wall_seconds", 0.0)
+    elapsed = float(elapsed_raw) if elapsed_raw is not None else 0.0
+    return increments, newton, elapsed
+
+
 def run_analysis(
     deck_or_path: PreparedAnalysis | Deck | str | Path,
     *,
@@ -355,6 +391,14 @@ def run_analysis(
     output_dir = deck.resolve(str(deck.data["output"]["directory"]))
     database_path = output_dir / str(deck.data["output"].get("database", "run.h5"))
     log_path = output_dir / str(deck.data["output"].get("history_file", "run_log.json"))
+    prior_increments: list[IncrementRecord] = []
+    prior_newton: list[dict] = []
+    elapsed_before_restart = 0.0
+    resuming_existing_database = bool(restart_from) and database_path.is_file()
+    if resuming_existing_database:
+        prior_increments, prior_newton, elapsed_before_restart = _load_run_log_prefix(
+            log_path, t_n, t_start, tol_time
+        )
     dt_min = float(time_data["dt_min"])
     dt_max = float(time_data["dt_max"])
     cutback_factor = float(time_data["cutback_factor"])
@@ -379,12 +423,21 @@ def run_analysis(
         t_n,
         u_n,
         lambda_n,
+        increments=prior_increments,
+        newton_history=prior_newton,
         execution=executor.info.as_dict(),
     )
     writer: HDF5ResultWriter | None = None
     try:
-        writer = HDF5ResultWriter(database_path, model, resume=bool(restart_from))
-        result.timing["elapsed_wall_seconds"] = (perf_counter_ns() - analysis_start) * 1.0e-9
+        writer = HDF5ResultWriter(
+            database_path,
+            model,
+            resume=bool(restart_from),
+            resume_time=t_n if resuming_existing_database else None,
+        )
+        result.timing["elapsed_wall_seconds"] = (
+            elapsed_before_restart + (perf_counter_ns() - analysis_start) * 1.0e-9
+        )
         write_run_log(
             log_path,
             result.increments,
@@ -463,8 +516,9 @@ def run_analysis(
                         for obsolete in files[:-keep_last]:
                             obsolete.unlink()
                 result.timing["elapsed_wall_seconds"] = (
-                    perf_counter_ns() - analysis_start
-                ) * 1.0e-9
+                    elapsed_before_restart
+                    + (perf_counter_ns() - analysis_start) * 1.0e-9
+                )
                 write_run_log(
                     log_path,
                     result.increments,
@@ -483,7 +537,9 @@ def run_analysis(
             result.lambdas,
             element_executor=executor,
         )
-        result.timing["elapsed_wall_seconds"] = (perf_counter_ns() - analysis_start) * 1.0e-9
+        result.timing["elapsed_wall_seconds"] = (
+            elapsed_before_restart + (perf_counter_ns() - analysis_start) * 1.0e-9
+        )
         write_run_log(
             log_path,
             result.increments,

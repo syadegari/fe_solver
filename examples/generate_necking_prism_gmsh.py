@@ -77,28 +77,46 @@ def map_mesh(imperfection: float) -> None:
         )
 
 
-def validate(volume: int, nx: int, ny: int, nz: int) -> None:
-    hex8 = gmsh.model.mesh.getElementType("Hexahedron", 1, False)
+def validate(volume: int, element: str, nx: int, ny: int, nz: int) -> None:
+    if element == "hex8":
+        expected_type = gmsh.model.mesh.getElementType("Hexahedron", 1, False)
+        expected_nodes = 8
+    elif element == "hex20":
+        expected_type = gmsh.model.mesh.getElementType("Hexahedron", 2, True)
+        expected_nodes = 20
+    else:
+        raise ValueError(f"unsupported element: {element}")
     types, blocks, _ = gmsh.model.mesh.getElements(3, volume)
     counts = {int(kind): len(tags) for kind, tags in zip(types, blocks)}
     expected = nx * ny * nz
-    if counts != {hex8: expected}:
-        raise RuntimeError(f"unexpected mesh {counts}; expected {expected} Hex8 elements")
+    if counts != {expected_type: expected}:
+        raise RuntimeError(f"unexpected mesh {counts}; expected {expected} {element} elements")
+    properties = gmsh.model.mesh.getElementProperties(expected_type)
+    if int(properties[3]) != expected_nodes:
+        raise RuntimeError(
+            f"unexpected node count for {element}: {int(properties[3])}"
+        )
     tags = np.concatenate([np.asarray(block, dtype=np.int64) for block in blocks])
     quality = np.asarray(gmsh.model.mesh.getElementQualities(tags, "minSJ"))
     if quality.min() <= 0.0:
         raise RuntimeError("generated prism has a nonpositive scaled Jacobian")
-    print(f"validated {expected} Hex8 elements; minimum scaled Jacobian={quality.min():.6g}")
+    print(
+        f"validated {expected} {element} elements; minimum scaled Jacobian="
+        f"{quality.min():.6g}"
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default="necking_prism_small_hex8.msh")
+    parser.add_argument("--element", choices=("hex8", "hex20"), default="hex8")
+    parser.add_argument("--out", default=None)
     parser.add_argument("--nx", type=int, default=2)
     parser.add_argument("--ny", type=int, default=2)
     parser.add_argument("--nz", type=int, default=24)
     parser.add_argument("--imperfection", type=float, default=0.018)
     args = parser.parse_args()
+    if args.out is None:
+        args.out = f"necking_prism_small_{args.element}.msh"
     if min(args.nx, args.ny, args.nz) < 1 or args.nz % 2:
         raise ValueError("division counts must be positive and nz must be even")
     if not 0.0 <= args.imperfection < 1.0:
@@ -107,7 +125,7 @@ def main() -> None:
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 1)
-        gmsh.model.add("necking_prism_small")
+        gmsh.model.add(f"necking_prism_small_{args.element}")
         volume = gmsh.model.occ.addBox(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
         gmsh.model.occ.synchronize()
         surfaces, monitor = classify_unit_box()
@@ -126,8 +144,11 @@ def main() -> None:
 
         gmsh.option.setNumber("Mesh.MshFileVersion", 4.1)
         gmsh.model.mesh.generate(3)
+        if args.element == "hex20":
+            gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 1)
+            gmsh.model.mesh.setOrder(2)
         map_mesh(args.imperfection)
-        validate(volume, args.nx, args.ny, args.nz)
+        validate(volume, args.element, args.nx, args.ny, args.nz)
         gmsh.write(args.out)
         normalize_msh_whitespace(args.out)
     finally:

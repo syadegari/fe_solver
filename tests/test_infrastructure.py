@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -18,11 +19,12 @@ from fe_solver.io import HDF5ResultWriter, load_restart, write_restart
 from fe_solver.mesh import read_gmsh
 from fe_solver.postprocess import write_xdmf
 from fe_solver.output_fields import TENSOR_COMPONENTS, pack_symmetric, unpack_symmetric
-from fe_solver.quadrature import HEX8_POINTS
-from fe_solver.shape import hex8_shape
+from fe_solver.quadrature import HEX20_POINTS, HEX8_POINTS
+from fe_solver.shape import hex20_shape, hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import ModelError, RecoverableError
 from verification.check_j2_prism import compare_prism_histories, extract_prism_history
+from verification.run_j2_formulation_study import build_case_deck
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +107,73 @@ class MeshConstraintTests(unittest.TestCase):
             for point in HEX8_POINTS:
                 _, dN = hex8_shape(point)
                 self.assertGreater(float(np.linalg.det(X_e.T @ dN)), 0.0)
+
+        study_meshes = (
+            ("necking_prism_refined_hex8.msh", 1225, 768, HEX8_POINTS, hex8_shape),
+            ("necking_prism_small_hex20.msh", 741, 96, HEX20_POINTS, hex20_shape),
+            (
+                "necking_bar_quarter_refined_hex8.msh", 8967, 7680,
+                HEX8_POINTS, hex8_shape,
+            ),
+        )
+        for filename, expected_nodes, expected_elements, points, shape in study_meshes:
+            with self.subTest(filename=filename):
+                study = read_gmsh(ROOT / "examples" / filename)
+                self.assertEqual(len(study.X), expected_nodes)
+                self.assertEqual(len(study.elements), expected_elements)
+                self.assertEqual(len(study.volume_groups["solid"]), expected_elements)
+                self.assertEqual(
+                    set(study.physical_dimensions), set(mesh.physical_dimensions)
+                )
+                for element in study.elements.values():
+                    X_e = study.X[element.connectivity]
+                    for point in points:
+                        _, dN = shape(point)
+                        self.assertGreater(float(np.linalg.det(X_e.T @ dN)), 0.0)
+
+    def test_j2_formulation_study_case_matrix_is_orthogonal(self) -> None:
+        def normalized(case_name: str) -> dict:
+            data = copy.deepcopy(build_case_deck(case_name).data)
+            data["analysis"]["name"] = "normalized"
+            data["output"]["directory"] = "normalized"
+            return data
+
+        for fbar_name, standard_name in (
+            ("coarse_hex8_fbar", "coarse_hex8"),
+            ("refined_hex8_fbar", "refined_hex8"),
+            ("soft_bulk_hex8_fbar", "soft_bulk_hex8"),
+        ):
+            with self.subTest(pair=(fbar_name, standard_name)):
+                fbar = normalized(fbar_name)
+                standard = normalized(standard_name)
+                standard["element_assignments"][0]["formulation"] = "hex8_fbar"
+                self.assertEqual(standard, fbar)
+
+        coarse = normalized("coarse_hex8_fbar")
+        refined = normalized("refined_hex8_fbar")
+        refined["mesh"]["file"] = coarse["mesh"]["file"]
+        self.assertEqual(refined, coarse)
+
+        soft_bulk = normalized("soft_bulk_hex8_fbar")
+        soft_bulk["materials"][0]["properties"]["bulk_modulus"] = (
+            coarse["materials"][0]["properties"]["bulk_modulus"]
+        )
+        self.assertEqual(soft_bulk, coarse)
+
+        hex20 = normalized("coarse_hex20")
+        hex20["mesh"]["file"] = coarse["mesh"]["file"]
+        hex20["element_assignments"][0]["formulation"] = "hex8_fbar"
+        self.assertEqual(hex20, coarse)
+
+        circular = normalized("circular_hex8_fbar")
+        refined_circular = normalized("refined_circular_hex8_fbar")
+        refined_circular["mesh"]["file"] = circular["mesh"]["file"]
+        self.assertEqual(refined_circular, circular)
+
+        deck = build_case_deck("coarse_hex20")
+        mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
+        model = build_model(deck, mesh)
+        self.assertEqual(model.blocks[0].state_n.shape[:2], (96, 27))
 
     def test_affine_boundary_and_exact_macro_paths(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")
@@ -292,6 +361,47 @@ class TimeRestartTests(unittest.TestCase):
         np.testing.assert_array_equal(resumed.lambdas, cold.lambdas)
         for resumed_block, cold_block in zip(resumed.model.blocks, cold.model.blocks):
             np.testing.assert_array_equal(resumed_block.state_n, cold_block.state_n)
+
+    def test_in_place_resume_rolls_back_results_and_preserves_log_prefix(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8.toml")
+        with tempfile.TemporaryDirectory() as directory:
+            data = copy.deepcopy(original.data)
+            data["output"]["directory"] = directory
+            data["restart"].update(
+                {"enabled": True, "interval": 0.05, "explicit_times": [], "keep_last": 3}
+            )
+            cold = run_analysis(Deck(original.path, data, original.curves), stop_time=0.1)
+            output = Path(directory)
+            database = output / "run.h5"
+            log_path = output / "run_log.json"
+            restart = output / "restart/restart_000001.h5"
+            with log_path.open(encoding="utf-8") as stream:
+                first_log = json.load(stream)
+            with h5py.File(database, "r") as archive:
+                np.testing.assert_array_equal(archive["results/time"], [0.0, 0.05, 0.1])
+
+            resumed_data = copy.deepcopy(data)
+            resumed_data["restart"]["restart_from"] = str(restart)
+            resumed = run_analysis(
+                Deck(original.path, resumed_data, original.curves), stop_time=0.1
+            )
+            with log_path.open(encoding="utf-8") as stream:
+                resumed_log = json.load(stream)
+            with h5py.File(database, "r") as archive:
+                np.testing.assert_array_equal(archive["results/time"], [0.0, 0.05, 0.1])
+                self.assertEqual(int(archive["results"].attrs["n_complete_steps"]), 3)
+
+        self.assertEqual(len(resumed.increments), 2)
+        self.assertEqual(len(resumed_log["increments"]), 2)
+        self.assertEqual(resumed_log["increments"][0]["t_n"], 0.0)
+        self.assertEqual(resumed_log["increments"][0]["t_np1"], 0.05)
+        self.assertEqual(resumed_log["increments"][1]["t_np1"], 0.1)
+        self.assertGreater(
+            resumed_log["timing"]["elapsed_wall_seconds"],
+            first_log["timing"]["elapsed_wall_seconds"],
+        )
+        np.testing.assert_array_equal(resumed.u, cold.u)
+        np.testing.assert_array_equal(resumed.lambdas, cold.lambdas)
 
     def test_recoverable_failure_cuts_back_from_committed_state(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")

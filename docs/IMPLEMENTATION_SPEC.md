@@ -1269,6 +1269,9 @@ meaningfully interpolated must declare a model-specific reporting operation befo
 
 Make append completion transactional at the schema level: update `n_complete_steps` only after all datasets for a row
 have been flushed. On resume, reject a damaged committed prefix and truncate any longer incomplete tail to that count.
+When resuming in place from an older durable restart, first truncate every result dataset and the JSON increment/Newton
+history to the row at the exact restart time, then recompute the replaced tail. Preserve the retained log prefix and
+accumulate elapsed wall time across invocations; do not silently replace the run history with only the resumed segment.
 
 ### 21.3 Visualization postprocessing
 
@@ -1523,6 +1526,11 @@ Use 50 base load increments and save exact states at end elongations 1 through 7
 
 The published target radial displacement at 7 mm half-model elongation is approximately `-3.740 mm`; the cited ANSYS 3D discretization reports approximately `-3.801 mm`. Record both as external references. Because that model uses a reduced-integration mixed element rather than this solver's F-bar element, require a two-level mesh-convergence study before adopting a numerical tolerance. The helper `verification/check_j2_necking.py` reports the complete observable history and enables an explicit reference-tolerance check when requested.
 
+The circular-bar helper must not report an error against the 7 mm reference when a database ends before that event.
+It must identify the result as incomplete for reference checking. It may plot end reaction, monitored middle-surface
+radial displacement with the published final point, and maximum equivalent plastic strain against prescribed end
+elongation.
+
 ### 23.6 Small J2 square-prism diagnostic and standard-Hex8 control
 
 Maintain a smaller qualitative companion to Case E for nonlinear-solver diagnosis. It uses the same half-length, material, axial grading, 1.8% linear middle imperfection, symmetry conditions, and 7 mm end displacement, but replaces the quarter circle by a quarter square with two elements in each transverse direction and 24 axial layers: 96 Hex8-Fbar elements total. Choose the end half-width `R sqrt(pi)/2`, so the complete square has the same end area as the reference circle. This case is not a substitute for the circular benchmark and has no published displacement target; its purposes are to reproduce plastic localization and exercise Newton globalization at substantially lower cost than the circular mesh.
@@ -1536,6 +1544,24 @@ may identify a problem but cannot establish convergence; quantitative conclusion
 refinement. Provide a reproducible comparison plot against prescribed end elongation that includes force, middle
 half-width, maximum equivalent plastic strain, cross-section mean-stress spread, raw Gauss-point `J` range, and the
 `J` range seen by the material update.
+
+Use the following orthogonal follow-on study matrix, keeping geometry, imperfection, loading, hardening, nonlinear
+controls, and output events unchanged unless listed:
+
+| Study axis | Baseline | Variant |
+| --- | --- | --- |
+| element formulation | 2x2x24 Hex8-Fbar | identical standard Hex8 |
+| mesh resolution | paired 2x2x24 Hex8 meshes | paired 4x4x48 Hex8 meshes |
+| bulk response | `bulk_modulus=164210 MPa` | paired coarse Hex8 cases with `bulk_modulus=82105 MPa` |
+| interpolation order | coarse Hex8 pair | standard 2x2x24 serendipity Hex20 |
+| circular benchmark mesh | 960-element three-block quarter section | 7680-element doubled-resolution mesh |
+
+Generate the refined Hex8 and coarse Hex20 meshes with the same square-prism generator and taper map. Generate the
+circular refinement with twice the core, radial, and axial divisions of the baseline three-block mesh. The study runner
+must construct cases by changing only the named orthogonal properties of the appropriate square-prism or circular-bar
+base deck. Keep the study out of the ordinary acceptance suite because the refined cases are long-running. Compare
+physical quantities directly from HDF5; ParaView side-by-side views are supporting visual evidence rather than the
+numerical comparison path.
 
 Use residual-based backtracking for all supplied J2 necking decks. The diagnostic utilities must support (a) material and element tangent checks using evolved Gauss-point states from restart/output data, (b) extraction and direct comparison of the two small-prism formulations, and (c) dense null-space/SVD inspection of the reduced tangent only for this deliberately small model. Dense matrices remain prohibited in the production solver.
 

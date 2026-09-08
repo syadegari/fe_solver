@@ -10,8 +10,8 @@ from typing import Any
 import h5py
 import numpy as np
 
-from fe_solver.quadrature import HEX8_POINTS
-from fe_solver.shape import hex8_shape
+from fe_solver.quadrature import HEX20_POINTS, HEX8_POINTS
+from fe_solver.shape import hex20_shape, hex8_shape
 
 
 SAMPLE_TIMES = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
@@ -149,7 +149,18 @@ def _deformation_jacobian_ranges(
     displacement: np.ndarray,
     connectivity: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    points = [*HEX8_POINTS, np.zeros(3)]
+    nodes_per_element = int(connectivity.shape[1])
+    if nodes_per_element == 8:
+        quadrature_points = HEX8_POINTS
+        shape = hex8_shape
+    elif nodes_per_element == 20:
+        quadrature_points = HEX20_POINTS
+        shape = hex20_shape
+    else:
+        raise RuntimeError(
+            f"small-prism diagnostic does not support {nodes_per_element}-node elements"
+        )
+    points = [*quadrature_points, np.zeros(3)]
     minimum = np.full(len(displacement), np.inf)
     maximum = np.full(len(displacement), -np.inf)
     center_minimum = np.full(len(displacement), np.inf)
@@ -159,12 +170,12 @@ def _deformation_jacobian_ranges(
         X_e = X[conn]
         x_e = current[:, conn, :]
         for point_index, point in enumerate(points):
-            _, dN = hex8_shape(point)
+            _, dN = shape(point)
             inverse_J0 = np.linalg.inv(X_e.T @ dN)
             Jx = np.einsum("tni,nj->tij", x_e, dN)
             F = np.einsum("tij,jk->tik", Jx, inverse_J0)
             determinant = np.linalg.det(F)
-            if point_index == len(HEX8_POINTS):
+            if point_index == len(quadrature_points):
                 center_minimum = np.minimum(center_minimum, determinant)
                 center_maximum = np.maximum(center_maximum, determinant)
             else:
@@ -227,8 +238,8 @@ def extract_prism_history(database: str | Path) -> PrismHistory:
             raise RuntimeError("small-prism diagnostic requires exactly one element block")
         mesh_block = archive["mesh/blocks/0000"]
         formulation = str(mesh_block.attrs["formulation"])
-        if formulation not in ("hex8", "hex8_fbar"):
-            raise RuntimeError("small-prism diagnostic requires Hex8 or Hex8-Fbar")
+        if formulation not in ("hex8", "hex8_fbar", "hex20"):
+            raise RuntimeError("small-prism diagnostic requires Hex8, Hex8-Fbar, or Hex20")
         result_block = archive["results/blocks/0000"]
         state = result_block["state"]
         if "equivalent_plastic_strain" not in state:
@@ -255,7 +266,9 @@ def extract_prism_history(database: str | Path) -> PrismHistory:
     if equivalent_plastic_strain.shape != (len(time), len(connectivity)):
         raise RuntimeError("equivalent plastic strain has an unexpected shape")
     z_nodes, node_layers = _coordinate_groups(X[:, 2])
-    centers = np.mean(X[connectivity], axis=1)
+    center_shape = hex8_shape if connectivity.shape[1] == 8 else hex20_shape
+    center_weights, _ = center_shape(np.zeros(3))
+    centers = np.einsum("a,eai->ei", center_weights, X[connectivity])
     z_elements, element_layers = _coordinate_groups(centers[:, 2])
     current = X[None, :, :] + displacement
     width_x = np.empty((len(time), len(node_layers)))
@@ -389,15 +402,24 @@ def plot_prism_histories(
     labels = {
         "hex8_fbar": "Hex8-Fbar",
         "hex8": "Hex8",
+        "hex20": "Hex20",
     }
     colors = {
         "hex8_fbar": "#1f77b4",
         "hex8": "#d95f02",
+        "hex20": "#2ca02c",
     }
     fig, axes = plt.subplots(2, 3, figsize=(14.5, 8.2), sharex=True, constrained_layout=True)
 
     for history in histories:
         label = labels.get(history.formulation, history.formulation)
+        linestyle = "-"
+        if "refined" in history.analysis_name:
+            label += " refined 4x4x48"
+            linestyle = "--"
+        elif "soft_bulk" in history.analysis_name:
+            label += r" $K/2$"
+            linestyle = ":"
         color = colors.get(history.formulation)
         elongation = history.end_elongation
         mean_half_width = 0.5 * (
@@ -405,29 +427,43 @@ def plot_prism_histories(
         )
         axes[0, 0].plot(
             elongation, np.abs(history.end_reaction_z) / 1000.0,
-            color=color, label=label,
+            color=color, linestyle=linestyle, label=label,
         )
-        axes[0, 1].plot(elongation, mean_half_width, color=color, label=label)
+        axes[0, 1].plot(
+            elongation, mean_half_width, color=color, linestyle=linestyle, label=label
+        )
         axes[0, 2].plot(
             elongation, history.maximum_equivalent_plastic_strain,
-            color=color, label=label,
+            color=color, linestyle=linestyle, label=label,
         )
         axes[1, 0].plot(
             elongation, history.maximum_cross_section_mean_stress_spread,
-            color=color, label=label,
+            color=color, linestyle=linestyle, label=label,
         )
         axes[1, 1].fill_between(
             elongation, history.raw_gauss_J_minimum, history.raw_gauss_J_maximum,
             color=color, alpha=0.22, label=label,
         )
-        axes[1, 1].plot(elongation, history.raw_gauss_J_minimum, color=color, linewidth=0.8)
-        axes[1, 1].plot(elongation, history.raw_gauss_J_maximum, color=color, linewidth=0.8)
+        axes[1, 1].plot(
+            elongation, history.raw_gauss_J_minimum,
+            color=color, linestyle=linestyle, linewidth=0.8,
+        )
+        axes[1, 1].plot(
+            elongation, history.raw_gauss_J_maximum,
+            color=color, linestyle=linestyle, linewidth=0.8,
+        )
         axes[1, 2].fill_between(
             elongation, history.material_J_minimum, history.material_J_maximum,
             color=color, alpha=0.22, label=label,
         )
-        axes[1, 2].plot(elongation, history.material_J_minimum, color=color, linewidth=0.8)
-        axes[1, 2].plot(elongation, history.material_J_maximum, color=color, linewidth=0.8)
+        axes[1, 2].plot(
+            elongation, history.material_J_minimum,
+            color=color, linestyle=linestyle, linewidth=0.8,
+        )
+        axes[1, 2].plot(
+            elongation, history.material_J_maximum,
+            color=color, linestyle=linestyle, linewidth=0.8,
+        )
 
     axes[0, 0].set(ylabel=r"absolute end reaction $|R_z|$ [kN]", title="Force response")
     axes[0, 1].set(ylabel="middle mean half-width [mm]", title="Neck contraction")

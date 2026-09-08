@@ -114,7 +114,14 @@ def _create_time_dataset(group: h5py.Group, name: str, item_shape: tuple[int, ..
 class HDF5ResultWriter:
     """Append-only accepted-state database; incomplete tail rows are ignored."""
 
-    def __init__(self, path: Path, model: FEModel, *, resume: bool = False):
+    def __init__(
+        self,
+        path: Path,
+        model: FEModel,
+        *,
+        resume: bool = False,
+        resume_time: float | None = None,
+    ):
         self.path = path
         self.model = model
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,6 +131,8 @@ class HDF5ResultWriter:
             self._initialize()
         else:
             self._validate_and_truncate()
+            if resume_time is not None:
+                self._truncate_to_time(resume_time)
 
     def _initialize(self) -> None:
         root = self.file
@@ -238,6 +247,26 @@ class HDF5ResultWriter:
                 raise ModelError("results database has an incomplete committed prefix")
             if dataset.shape[0] != complete:
                 dataset.resize(complete, axis=0)
+
+    def _truncate_to_time(self, resume_time: float) -> None:
+        complete = self.n_complete_steps
+        times = np.asarray(self.file["results/time"][:complete], dtype=float)
+        tolerance = 1.0e-12 * max(1.0, abs(float(resume_time)))
+        matches = np.flatnonzero(np.abs(times - resume_time) <= tolerance)
+        if len(matches) != 1:
+            raise ModelError(
+                "restart time must identify exactly one committed results-database row"
+            )
+        keep = int(matches[0]) + 1
+        if keep == complete:
+            return
+        # Lower the durable prefix first. If interruption occurs during resizing,
+        # normal resume validation can safely trim the remaining longer datasets.
+        self.file["results"].attrs.modify("n_complete_steps", keep)
+        self.file.flush()
+        for dataset in self._time_datasets():
+            dataset.resize(keep, axis=0)
+        self.file.flush()
 
     @property
     def n_complete_steps(self) -> int:
