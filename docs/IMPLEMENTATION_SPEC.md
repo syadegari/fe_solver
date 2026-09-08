@@ -1533,7 +1533,9 @@ assessing volumetric locking, not an alternative reference result. Compare force
 middle-section width, axial localization of equivalent plastic strain, raw and material-seen Jacobian ranges,
 cross-section variation of mean Cauchy stress, Newton effort, line-search effort, and cutbacks. A coarse-mesh difference
 may identify a problem but cannot establish convergence; quantitative conclusions require at least one paired mesh
-refinement.
+refinement. Provide a reproducible comparison plot against prescribed end elongation that includes force, middle
+half-width, maximum equivalent plastic strain, cross-section mean-stress spread, raw Gauss-point `J` range, and the
+`J` range seen by the material update.
 
 Use residual-based backtracking for all supplied J2 necking decks. The diagnostic utilities must support (a) material and element tangent checks using evolved Gauss-point states from restart/output data, (b) extraction and direct comparison of the two small-prism formulations, and (c) dense null-space/SVD inspection of the reduced tangent only for this deliberately small model. Dense matrices remain prohibited in the production solver.
 

@@ -126,12 +126,15 @@ python -m verification.check_j2_prism \
 python -m verification.check_j2_prism \
   examples/results/j2_necking_prism_small_hex8_fbar/run.h5 \
   --compare examples/results/j2_necking_prism_small_hex8/run.h5 \
-  --summary-only --output /tmp/j2_prism_comparison.json
+  --summary-only --output /tmp/j2_prism_comparison.json \
+  --plot /tmp/j2_prism_comparison.png
 ```
 
 The comparison reports reaction, transverse contraction, plastic localization, raw and material-seen Jacobian ranges,
-and cross-section mean-stress variation. The standard Hex8 result is a locking control; convergence alone does not make
-it a reference solution.
+and cross-section mean-stress variation. Its optional six-panel plot places the physical response and volumetric
+diagnostics against prescribed end elongation. The standard Hex8 result is a locking control; convergence alone does
+not make it a reference solution. A plot from the first completed paired 96-element runs is retained under
+`verification/j2_prism_results/` as a qualitative regression artifact.
 
 Standalone material-point characterization and evolved-state tangent diagnostics are available through:
 

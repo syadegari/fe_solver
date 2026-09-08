@@ -372,6 +372,92 @@ def compare_prism_histories(
     }
 
 
+def plot_prism_histories(
+    reference: PrismHistory,
+    candidate: PrismHistory,
+    output: str | Path,
+) -> Path:
+    """Plot physical response and volumetric diagnostics for a formulation pair."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    histories = (reference, candidate)
+    labels = {
+        "hex8_fbar": "Hex8-Fbar",
+        "hex8": "Hex8",
+    }
+    colors = {
+        "hex8_fbar": "#1f77b4",
+        "hex8": "#d95f02",
+    }
+    fig, axes = plt.subplots(2, 3, figsize=(14.5, 8.2), sharex=True, constrained_layout=True)
+
+    for history in histories:
+        label = labels.get(history.formulation, history.formulation)
+        color = colors.get(history.formulation)
+        elongation = history.end_elongation
+        mean_half_width = 0.5 * (
+            history.middle_half_width_x + history.middle_half_width_y
+        )
+        axes[0, 0].plot(
+            elongation, np.abs(history.end_reaction_z) / 1000.0,
+            color=color, label=label,
+        )
+        axes[0, 1].plot(elongation, mean_half_width, color=color, label=label)
+        axes[0, 2].plot(
+            elongation, history.maximum_equivalent_plastic_strain,
+            color=color, label=label,
+        )
+        axes[1, 0].plot(
+            elongation, history.maximum_cross_section_mean_stress_spread,
+            color=color, label=label,
+        )
+        axes[1, 1].fill_between(
+            elongation, history.raw_gauss_J_minimum, history.raw_gauss_J_maximum,
+            color=color, alpha=0.22, label=label,
+        )
+        axes[1, 1].plot(elongation, history.raw_gauss_J_minimum, color=color, linewidth=0.8)
+        axes[1, 1].plot(elongation, history.raw_gauss_J_maximum, color=color, linewidth=0.8)
+        axes[1, 2].fill_between(
+            elongation, history.material_J_minimum, history.material_J_maximum,
+            color=color, alpha=0.22, label=label,
+        )
+        axes[1, 2].plot(elongation, history.material_J_minimum, color=color, linewidth=0.8)
+        axes[1, 2].plot(elongation, history.material_J_maximum, color=color, linewidth=0.8)
+
+    axes[0, 0].set(ylabel=r"absolute end reaction $|R_z|$ [kN]", title="Force response")
+    axes[0, 1].set(ylabel="middle mean half-width [mm]", title="Neck contraction")
+    axes[0, 2].set(ylabel="maximum equivalent plastic strain", title="Plastic localization")
+    axes[1, 0].set(
+        xlabel="prescribed end elongation [mm]",
+        ylabel="maximum section mean-stress spread [MPa]",
+        title="Hydrostatic-stress variation",
+    )
+    axes[1, 1].set(
+        xlabel="prescribed end elongation [mm]",
+        ylabel=r"raw Gauss-point $J$ range",
+        title="Kinematic volume ratio",
+    )
+    axes[1, 2].set(
+        xlabel="prescribed end elongation [mm]",
+        ylabel=r"material-seen $J$ range",
+        title="Constitutive volume ratio",
+    )
+    for axis in axes.flat:
+        axis.grid(True, alpha=0.25)
+        axis.legend()
+    axes[1, 1].axhline(1.0, color="0.35", linewidth=0.8, linestyle="--")
+    axes[1, 2].axhline(1.0, color="0.35", linewidth=0.8, linestyle="--")
+    fig.suptitle("Small J2 necking prism: standard Hex8 versus centroidal F-bar")
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="extract or compare small J2 square-prism observables"
@@ -380,7 +466,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--compare", type=Path, default=None, help="candidate run.h5")
     parser.add_argument("--summary-only", action="store_true")
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--plot", type=Path, default=None,
+        help="write a six-panel PNG comparison (requires --compare)",
+    )
     args = parser.parse_args(argv)
+    if args.plot is not None and args.compare is None:
+        parser.error("--plot requires --compare")
     reference = extract_prism_history(args.database)
     if args.compare is None:
         report = reference.as_dict(include_curves=not args.summary_only)
@@ -396,6 +488,9 @@ def main(argv: list[str] | None = None) -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with args.output.open("w", encoding="utf-8") as stream:
             json.dump(report, stream, indent=2)
+    if args.plot is not None:
+        assert args.compare is not None
+        plot_prism_histories(reference, candidate, args.plot)
 
 
 if __name__ == "__main__":
