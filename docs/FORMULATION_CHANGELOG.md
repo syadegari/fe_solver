@@ -2,6 +2,18 @@
 
 This formulation is the normalized successor to the earlier combined teaching/implementation manuscript.
 
+2026-09-08 J2 solver-diagnostics follow-up:
+
+- added optional residual-based Newton backtracking to the generic KKT solution method, including the effect of damping on affine-constraint residuals and the requirement that every candidate reuse committed material history;
+- retained the distinction between exact and modified Newton: damping changes the search length, while exact Newton still uses the tangent at each accepted iterate;
+- kept material-point characterization, diagnostic scripts, mesh sizes, and line-search input controls in `IMPLEMENTATION_SPEC.md` rather than turning them into constitutive theory.
+
+2026-09-07 finite-strain J2 extension:
+
+- added the complete multiplicative J2/Voce constitutive example as a self-contained appendix, preserving the material-agnostic focus of the main formulation;
+- documented the radial return, determinant-one plastic-metric reconstruction, and exact directional construction of `dP/dF` used by the implementation;
+- added the corresponding coding contract and circular-bar necking benchmark only to `IMPLEMENTATION_SPEC.md`.
+
 2026-09-07 output and frame-benchmark refinement:
 
 - derived the positive transverse stretch that makes the neo-Hookean bar's lateral surfaces traction-free;

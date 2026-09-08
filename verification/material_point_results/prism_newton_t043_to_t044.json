@@ -1,0 +1,76 @@
+{
+  "committed_time": 0.43,
+  "committed_state_source": "solved_from_preceding_database_state",
+  "committed_setup_iterations": 12,
+  "attempt_time": 0.44,
+  "line_search": "none",
+  "outcome": "recoverable_failure",
+  "failure": "element 202: invalid trial centroid Jacobian",
+  "iterations": null,
+  "reduced_dimension": 507,
+  "conditioning": [
+    {
+      "iteration": 0,
+      "force_residual_inf": 3.4699496609391645e-09,
+      "constraint_residual_inf": 0.07000000000000028,
+      "largest_singular_value": 5040986.730396211,
+      "smallest_singular_value": 9287.27089658872,
+      "condition_number": 542.7845043529204
+    },
+    {
+      "iteration": 1,
+      "force_residual_inf": 2318.125873297875,
+      "constraint_residual_inf": 4.756066644687763e-13,
+      "largest_singular_value": 2947448.284609667,
+      "smallest_singular_value": 5.481583155933595,
+      "condition_number": 537700.1863812231
+    },
+    {
+      "iteration": 2,
+      "force_residual_inf": 6613.12315674536,
+      "constraint_residual_inf": 4.3510193331286244e-11,
+      "largest_singular_value": 2879224.5744108353,
+      "smallest_singular_value": 38.65942485187162,
+      "condition_number": 74476.65311739482
+    }
+  ],
+  "newton_history": [
+    {
+      "t_n": 0.43,
+      "t_np1": 0.44,
+      "iteration": 0,
+      "force_residual_inf": 3.4699496609391645e-09,
+      "force_tolerance": 4.930272935922833e-05,
+      "constraint_residual_inf": 0.07000000000000028,
+      "constraint_tolerance": 4.0800000000000004e-10,
+      "displacement_increment_inf": 0.0
+    },
+    {
+      "t_n": 0.43,
+      "t_np1": 0.44,
+      "iteration": 1,
+      "force_residual_inf": 2318.125873297875,
+      "force_tolerance": 8.405371749919695e-05,
+      "constraint_residual_inf": 4.756066644687763e-13,
+      "constraint_tolerance": 4.0800000000002273e-10,
+      "displacement_increment_inf": 0.07000000000022741
+    },
+    {
+      "t_n": 0.43,
+      "t_np1": 0.44,
+      "iteration": 2,
+      "force_residual_inf": 6613.12315674536,
+      "force_tolerance": 4.905845755361193e-05,
+      "constraint_residual_inf": 4.3510193331286244e-11,
+      "constraint_tolerance": 4.0800000000148023e-10,
+      "displacement_increment_inf": 0.15721551883386375
+    },
+    {
+      "t_n": 0.43,
+      "t_np1": 0.44,
+      "iteration": 3,
+      "failure_kind": "recoverable",
+      "failure_message": "element 202: invalid trial centroid Jacobian"
+    }
+  ]
+}

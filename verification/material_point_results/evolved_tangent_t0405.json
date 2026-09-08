@@ -1,0 +1,84 @@
+{
+  "restart_time": 0.4,
+  "trial_time": 0.405,
+  "elements": {
+    "maximum_plastic_strain": {
+      "element_index": 0,
+      "reference_center": [
+        0.3149584624994659,
+        0.31495846250067067,
+        0.37037499999999995
+      ],
+      "committed_equivalent_plastic_strain_range": [
+        0.13260550496447507,
+        0.13269502449624318
+      ],
+      "material": {
+        "directions": 24,
+        "maximum_relative_inf_error": 3.760695707856394e-09,
+        "median_relative_inf_error": 7.408737229530114e-10,
+        "trial_equivalent_plastic_strain_range": [
+          0.13654783782153146,
+          0.13664841907363418
+        ]
+      },
+      "element": {
+        "directions": 3,
+        "maximum_relative_inf_error": 2.7200877761252613e-09,
+        "median_relative_inf_error": 1.986971023896565e-09
+      }
+    },
+    "neck_outer": {
+      "element_index": 648,
+      "reference_center": [
+        4.458175076963861,
+        3.681541632686166,
+        0.37037499999999995
+      ],
+      "committed_equivalent_plastic_strain_range": [
+        0.12961054108143477,
+        0.12990582023814534
+      ],
+      "material": {
+        "directions": 24,
+        "maximum_relative_inf_error": 2.4023123469516886e-09,
+        "median_relative_inf_error": 6.41909447860459e-10,
+        "trial_equivalent_plastic_strain_range": [
+          0.13309327175102312,
+          0.13345982031150946
+        ]
+      },
+      "element": {
+        "directions": 3,
+        "maximum_relative_inf_error": 2.2167580738058216e-09,
+        "median_relative_inf_error": 1.5230596252697018e-09
+      }
+    },
+    "far_end": {
+      "element_index": 23,
+      "reference_center": [
+        0.3204896749994566,
+        0.3204896750006825,
+        25.926250000000003
+      ],
+      "committed_equivalent_plastic_strain_range": [
+        0.07371208173309324,
+        0.07375456292965092
+      ],
+      "material": {
+        "directions": 24,
+        "maximum_relative_inf_error": 1.5950587678990665e-09,
+        "median_relative_inf_error": 6.02710401695596e-10,
+        "trial_equivalent_plastic_strain_range": [
+          0.07371208173309324,
+          0.07375494506984163
+        ]
+      },
+      "element": {
+        "directions": 3,
+        "maximum_relative_inf_error": 6.064999445396051e-09,
+        "median_relative_inf_error": 4.66967678921384e-09
+      }
+    }
+  }
+}

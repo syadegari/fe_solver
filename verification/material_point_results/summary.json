@@ -1,0 +1,71 @@
+{
+  "properties": {
+    "shear_modulus": 80193.8,
+    "bulk_modulus": 164210.0,
+    "initial_yield_stress": 450.0,
+    "linear_hardening_modulus": 129.24,
+    "saturation_increment": 265.0,
+    "saturation_rate": 16.93
+  },
+  "steps": 400,
+  "comparison_steps": 200,
+  "elastic_reference_MPa": {
+    "D_1111": 271135.06666666665,
+    "D_1122": 110747.46666666667,
+    "D_1212": 80193.8
+  },
+  "uniaxial": {
+    "first_plastic_step": 8,
+    "final_sigma_11_MPa": 451.1232444408433,
+    "final_equivalent_plastic_strain": 0.09744231471561511,
+    "step_refinement_stress_relative": 1.764562697610967e-05,
+    "step_refinement_state_relative": 6.82525020838221e-06,
+    "spatial_tangent_components_MPa": {
+      "D_1111": {
+        "initial": 271135.06666666665,
+        "final": 163747.78779082838,
+        "minimum": 163747.78779082838,
+        "maximum": 271135.06666666665
+      },
+      "D_1122": {
+        "initial": 110747.46666666666,
+        "final": 163989.98286014498,
+        "minimum": 110653.66140081939,
+        "maximum": 163989.98286014498
+      },
+      "D_1212": {
+        "initial": 80193.8,
+        "final": 73655.57286217531,
+        "minimum": 70911.09490462279,
+        "maximum": 80194.04573696354
+      }
+    }
+  },
+  "simple_shear": {
+    "first_plastic_step": 13,
+    "final_sigma_12_MPa": 356.78993079233715,
+    "final_equivalent_plastic_strain": 0.055166306024990557,
+    "step_refinement_stress_relative": 0.00014194981543724783,
+    "step_refinement_state_relative": 5.121359230999621e-07,
+    "spatial_tangent_components_MPa": {
+      "D_1111": {
+        "initial": 271135.06666666665,
+        "final": 265483.00193351175,
+        "minimum": 263618.51247543626,
+        "maximum": 271135.06666666665
+      },
+      "D_1122": {
+        "initial": 110747.46666666666,
+        "final": 113570.2709998447,
+        "minimum": 110747.14589146667,
+        "maximum": 114504.83938339887
+      },
+      "D_1212": {
+        "initial": 80193.8,
+        "final": 626.8665585321927,
+        "minimum": 626.8665585321927,
+        "maximum": 80194.04058140001
+      }
+    }
+  }
+}

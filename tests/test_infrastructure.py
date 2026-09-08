@@ -18,6 +18,7 @@ from fe_solver.io import HDF5ResultWriter, load_restart, write_restart
 from fe_solver.mesh import read_gmsh
 from fe_solver.postprocess import write_xdmf
 from fe_solver.output_fields import TENSOR_COMPONENTS, pack_symmetric, unpack_symmetric
+from fe_solver.quadrature import HEX8_POINTS
 from fe_solver.shape import hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import ModelError, RecoverableError
@@ -71,6 +72,39 @@ class MeshConstraintTests(unittest.TestCase):
         self.assertEqual(len(mesh.volume_groups["matrix"]), 448)
         self.assertEqual(set(mesh.periodic_maps), {"xmax", "ymax", "zmax"})
 
+    def test_necking_mesh_groups_and_positive_reference_jacobians(self) -> None:
+        mesh = read_gmsh(ROOT / "examples/necking_bar_quarter_hex8.msh")
+        self.assertEqual(len(mesh.X), 1300)
+        self.assertEqual(len(mesh.elements), 960)
+        self.assertEqual(len(mesh.volume_groups["solid"]), 960)
+        self.assertEqual(
+            set(mesh.physical_dimensions),
+            {
+                "solid", "symmetry_x", "symmetry_y", "midplane",
+                "loaded_end", "outer_surface", "neck_monitor",
+            },
+        )
+        minimum_jacobian = np.inf
+        for element in mesh.elements.values():
+            X_e = mesh.X[element.connectivity]
+            for point in HEX8_POINTS:
+                _, dN = hex8_shape(point)
+                minimum_jacobian = min(
+                    minimum_jacobian, float(np.linalg.det(X_e.T @ dN))
+                )
+        self.assertGreater(minimum_jacobian, 0.0)
+
+        prism = read_gmsh(ROOT / "examples/necking_prism_small_hex8.msh")
+        self.assertEqual(len(prism.X), 225)
+        self.assertEqual(len(prism.elements), 96)
+        self.assertEqual(len(prism.volume_groups["solid"]), 96)
+        self.assertEqual(set(prism.physical_dimensions), set(mesh.physical_dimensions))
+        for element in prism.elements.values():
+            X_e = prism.X[element.connectivity]
+            for point in HEX8_POINTS:
+                _, dN = hex8_shape(point)
+                self.assertGreater(float(np.linalg.det(X_e.T @ dN)), 0.0)
+
     def test_affine_boundary_and_exact_macro_paths(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")
         mesh = read_gmsh(original.resolve(original.data["mesh"]["file"]))
@@ -115,6 +149,66 @@ class MeshConstraintTests(unittest.TestCase):
 
 
 class TimeRestartTests(unittest.TestCase):
+    @staticmethod
+    def j2_data(original: Deck) -> dict:
+        data = copy.deepcopy(original.data)
+        data["materials"] = [{
+            "name": "steel",
+            "model": "j2_plasticity",
+            "properties": {
+                "shear_modulus": 80193.8,
+                "bulk_modulus": 164210.0,
+                "initial_yield_stress": 450.0,
+                "linear_hardening_modulus": 129.24,
+                "saturation_increment": 265.0,
+                "saturation_rate": 16.93,
+            },
+        }]
+        data["element_assignments"][0]["material"] = "steel"
+        return data
+
+    def test_j2_nonzero_state_restart_round_trip(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8_fbar.toml")
+        deck = Deck(original.path, self.j2_data(original), original.curves)
+        mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
+        model = build_model(deck, mesh)
+        state = model.blocks[0].state_n
+        state[..., :3] = [np.exp(-0.08), np.exp(0.04), np.exp(0.04)]
+        state[..., 6] = 0.125
+        expected = state.copy()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "j2_restart.h5"
+            write_restart(
+                path, model, 0.4, 0.01, np.zeros(mesh.ndof),
+                np.zeros(build_constraints(deck, mesh).C.shape[0]),
+            )
+            state[...] = 0.0
+            load_restart(path, model)
+        np.testing.assert_array_equal(state, expected)
+
+    def test_j2_state_output_preserves_tensor_metadata(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8_fbar.toml")
+        deck = Deck(original.path, self.j2_data(original), original.curves)
+        mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
+        model = build_model(deck, mesh)
+        u = np.zeros(mesh.ndof)
+        assembly = assemble_internal(model, u, u, 0.0, 0.0, False)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "j2.h5"
+            with HDF5ResultWriter(path, model) as writer:
+                writer.append(0.0, u, u, assembly)
+                state = writer.file["results/blocks/0000/state"]
+                self.assertEqual(state["plastic_metric_inverse"].shape[-1], 6)
+                self.assertEqual(
+                    tuple(state["plastic_metric_inverse"].attrs["component_order"]),
+                    TENSOR_COMPONENTS,
+                )
+                self.assertEqual(state["equivalent_plastic_strain"].shape[-1], len(model.blocks[0].connectivity))
+            xdmf = write_xdmf(path)
+            text = xdmf.read_text(encoding="utf-8")
+            self.assertIn('Name="state_plastic_metric_inverse" AttributeType="Matrix"', text)
+            self.assertIn('Name="component_order" Value="11,22,33,12,23,13"', text)
+
     def test_mandatory_event_union(self) -> None:
         deck = load_deck(ROOT / "examples/case_a_hex8.toml")
         events, output, restart = mandatory_events(deck)
@@ -187,6 +281,53 @@ class TimeRestartTests(unittest.TestCase):
         self.assertAlmostEqual(result.increments[0].t_np1, 0.025)
         self.assertAlmostEqual(result.t, 0.05)
         self.assertAlmostEqual(float(np.max(result.u)), 0.02, places=12)
+
+    def test_backtracking_rejects_invalid_full_newton_candidate(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8.toml")
+        data = copy.deepcopy(original.data)
+        with tempfile.TemporaryDirectory(prefix="fe-line-search-") as directory:
+            data["output"]["directory"] = directory
+            data["restart"]["enabled"] = False
+            data["nonlinear"].update(
+                {
+                    "line_search": "backtracking",
+                    "line_search_reduction": 0.5,
+                    "line_search_armijo": 1.0e-4,
+                    "line_search_min_alpha": 1.0e-4,
+                    "line_search_max_backtracks": 14,
+                }
+            )
+            deck = Deck(original.path, data, original.curves)
+            from fe_solver import solver as solver_module
+            actual_assemble = solver_module.assemble_internal
+            rejected_full_candidate = False
+
+            def reject_once(*args, **kwargs):
+                nonlocal rejected_full_candidate
+                # The first changed-displacement call is the alpha=1 candidate.
+                # Mimic an inverted element so the search must try alpha=.5.
+                need_tangent = args[5] if len(args) > 5 else kwargs["need_tangent"]
+                if (
+                    not rejected_full_candidate
+                    and args[4] > args[3]
+                    and need_tangent
+                    and not np.array_equal(args[1], args[2])
+                ):
+                    rejected_full_candidate = True
+                    raise RecoverableError("deliberate invalid full-step candidate")
+                return actual_assemble(*args, **kwargs)
+
+            with mock.patch("fe_solver.solver.assemble_internal", side_effect=reject_once):
+                result = run_analysis(deck, stop_time=0.05)
+        self.assertTrue(rejected_full_candidate)
+        self.assertEqual(result.increments[0].cutbacks, 0)
+        first_iteration = next(
+            row for row in result.newton_history
+            if row["t_n"] == 0.0 and row["t_np1"] == 0.05 and row["iteration"] == 0
+        )
+        self.assertEqual(first_iteration["line_search_alpha"], 0.5)
+        self.assertEqual(first_iteration["line_search_backtracks"], 1)
+        self.assertAlmostEqual(result.t, 0.05)
 
     def test_hdf5_result_schema_centroid_recovery_and_tail_truncation(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")

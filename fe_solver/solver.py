@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 import warnings
 
 import numpy as np
@@ -55,6 +56,25 @@ def _inf_norm(vector: np.ndarray) -> float:
     return float(np.linalg.norm(vector, ord=np.inf)) if vector.size else 0.0
 
 
+def _scaled_residual_merit(
+    r_u: np.ndarray,
+    r_c: np.ndarray,
+    force_tolerance: float,
+    constraint_tolerance: float,
+) -> float:
+    """Measure both KKT residual blocks in their convergence-test units."""
+    def ratio(residual: np.ndarray, tolerance: float) -> float:
+        value = _inf_norm(residual)
+        if tolerance > 0.0:
+            return value / tolerance
+        return 0.0 if value == 0.0 else np.inf
+
+    return max(
+        ratio(r_u, force_tolerance),
+        ratio(r_c, constraint_tolerance),
+    )
+
+
 def _factor_kkt(K: sparse.csr_matrix, C: sparse.csr_matrix, ordering: str):
     zero = sparse.csr_matrix((C.shape[0], C.shape[0]))
     kkt = sparse.bmat([[K, C.T], [C, zero]], format="csc")
@@ -74,11 +94,26 @@ def _newton_attempt(
     t_n: float,
     t_np1: float,
     history: list[dict],
+    iteration_observer: Callable[[dict, AssemblyResult], None] | None = None,
 ) -> _NewtonResult:
     controls = model.deck.data["nonlinear"]
     method = str(controls.get("method", "newton"))
     if method not in ("newton", "modified_newton"):
         raise ModelError(f"unsupported nonlinear method {method!r}")
+    line_search = str(controls.get("line_search", "none"))
+    if line_search not in ("none", "backtracking"):
+        raise ModelError(f"unsupported nonlinear line_search {line_search!r}")
+    line_search_reduction = float(controls.get("line_search_reduction", 0.5))
+    line_search_armijo = float(controls.get("line_search_armijo", 1.0e-4))
+    line_search_min_alpha = float(controls.get("line_search_min_alpha", 1.0e-4))
+    line_search_max_backtracks = int(controls.get("line_search_max_backtracks", 14))
+    if line_search == "backtracking" and not (
+        0.0 < line_search_reduction < 1.0
+        and 0.0 <= line_search_armijo < 1.0
+        and 0.0 < line_search_min_alpha <= 1.0
+        and line_search_max_backtracks >= 0
+    ):
+        raise ModelError("invalid Newton backtracking parameters")
     max_iterations = int(controls["max_iterations"])
     C = constraints.C
     d = constraints.rhs(t_np1)
@@ -91,11 +126,28 @@ def _newton_attempt(
     factor = None
     frozen_K = None
     final_assembly: AssemblyResult | None = None
+    pending_assembly: AssemblyResult | None = None
     ordering = str(model.deck.data["linear_solver"].get("ordering", "COLAMD"))
 
     for iteration in range(max_iterations + 1):
         refresh = method == "newton" or iteration == 0
-        assembly = assemble_internal(model, u_n, u, t_n, t_np1, refresh)
+        if pending_assembly is None:
+            try:
+                assembly = assemble_internal(model, u_n, u, t_n, t_np1, refresh)
+            except RecoverableError as exc:
+                history.append(
+                    {
+                        "t_n": t_n,
+                        "t_np1": t_np1,
+                        "iteration": iteration,
+                        "failure_kind": "recoverable",
+                        "failure_message": str(exc),
+                    }
+                )
+                raise
+        else:
+            assembly = pending_assembly
+            pending_assembly = None
         final_assembly = assembly
         r_u = assembly.f_int - f_ext + C.T @ lambdas
         r_c = C @ u - d
@@ -108,14 +160,15 @@ def _newton_attempt(
         ) * max(_inf_norm(u), _inf_norm(u_n))
         residual_ok = _inf_norm(r_u) <= force_tol and _inf_norm(r_c) <= constraint_tol
         displacement_ok = not controls.get("check_displacement_increment", False) or _inf_norm(last_du) <= displacement_tol
-        history.append(
-            {
-                "t_n": t_n, "t_np1": t_np1, "iteration": iteration,
-                "force_residual_inf": _inf_norm(r_u), "force_tolerance": force_tol,
-                "constraint_residual_inf": _inf_norm(r_c), "constraint_tolerance": constraint_tol,
-                "displacement_increment_inf": _inf_norm(last_du),
-            }
-        )
+        record = {
+            "t_n": t_n, "t_np1": t_np1, "iteration": iteration,
+            "force_residual_inf": _inf_norm(r_u), "force_tolerance": force_tol,
+            "constraint_residual_inf": _inf_norm(r_c), "constraint_tolerance": constraint_tol,
+            "displacement_increment_inf": _inf_norm(last_du),
+        }
+        history.append(record)
+        if iteration_observer is not None:
+            iteration_observer(record, assembly)
         if residual_ok and displacement_ok:
             return _NewtonResult(u, lambdas, assembly, iteration)
         if iteration == max_iterations:
@@ -128,9 +181,64 @@ def _newton_attempt(
         correction = factor.solve(-np.concatenate([np.asarray(r_u), np.asarray(r_c)]))
         if not np.all(np.isfinite(correction)):
             raise ModelError("KKT solve returned a non-finite correction")
-        last_du = correction[:model.mesh.ndof]
-        u += last_du
-        lambdas += correction[model.mesh.ndof:]
+        delta_u = correction[:model.mesh.ndof]
+        delta_lambda = correction[model.mesh.ndof:]
+        if line_search == "none":
+            last_du = delta_u
+            u += delta_u
+            lambdas += delta_lambda
+            continue
+
+        # Trial every candidate from the same committed material state.  Invalid
+        # intermediate configurations reject only the candidate, not the increment.
+        base_merit = _scaled_residual_merit(r_u, r_c, force_tol, constraint_tol)
+        alpha = 1.0
+        candidate_failures: list[str] = []
+        accepted = False
+        attempted_candidates = 0
+        for backtrack in range(line_search_max_backtracks + 1):
+            if alpha < line_search_min_alpha:
+                break
+            attempted_candidates += 1
+            candidate_u = u + alpha * delta_u
+            candidate_lambdas = lambdas + alpha * delta_lambda
+            try:
+                candidate = assemble_internal(
+                    model, u_n, candidate_u, t_n, t_np1, method == "newton"
+                )
+            except RecoverableError as exc:
+                candidate_failures.append(str(exc))
+            else:
+                candidate_r_u = candidate.f_int - f_ext + C.T @ candidate_lambdas
+                candidate_r_c = C @ candidate_u - d
+                candidate_merit = _scaled_residual_merit(
+                    candidate_r_u, candidate_r_c, force_tol, constraint_tol
+                )
+                if candidate_merit <= (1.0 - line_search_armijo * alpha) * base_merit:
+                    u = candidate_u
+                    lambdas = candidate_lambdas
+                    last_du = alpha * delta_u
+                    record["line_search_alpha"] = alpha
+                    record["line_search_backtracks"] = backtrack
+                    record["line_search_trials"] = attempted_candidates
+                    record["line_search_merit"] = candidate_merit
+                    record["line_search_recoverable_rejections"] = len(candidate_failures)
+                    if candidate_failures:
+                        record["line_search_last_failure"] = candidate_failures[-1]
+                    pending_assembly = candidate
+                    accepted = True
+                    break
+            alpha *= line_search_reduction
+        if not accepted:
+            record["line_search_alpha"] = None
+            record["line_search_backtracks"] = attempted_candidates
+            record["line_search_trials"] = attempted_candidates
+            record["line_search_recoverable_rejections"] = len(candidate_failures)
+            if candidate_failures:
+                record["line_search_last_failure"] = candidate_failures[-1]
+            raise RecoverableError(
+                "Newton line search could not find an admissible residual-reducing step"
+            )
     assert final_assembly is not None
     raise RecoverableError(f"global Newton failed in {max_iterations} iterations")
 

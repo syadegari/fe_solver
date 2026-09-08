@@ -1460,12 +1460,37 @@ At Newton iteration $i$ the simultaneous correction is obtained from
 }
 \label{eq:kkt-newton}
 \end{equation}
-The updates are
+The undamped updates are
 \begin{align}
 \vct u^{(i+1)}&=\vct u^{(i)}+\Delta\vct u^{(i)},\\
 \vct\lambda^{(i+1)}&=\vct\lambda^{(i)}+\Delta\vct\lambda^{(i)}.
 \end{align}
 No constrained displacement is eliminated, and $\vct K$ is not separately factorized. The complete sparse matrix of Eq.~\eqref{eq:kkt-newton} is supplied to the linear solver.
+
+When globalization is required, the same KKT solution is retained as the Newton search direction but the update is damped,
+\begin{align}
+\vct u^{(i+1)}&=\vct u^{(i)}+\alpha_i\Delta\vct u^{(i)},\\
+\vct\lambda^{(i+1)}&=\vct\lambda^{(i)}+\alpha_i\Delta\vct\lambda^{(i)},
+\qquad 0<\alpha_i\leq1.
+\label{eq:kkt-damped-update}
+\end{align}
+This does not turn exact Newton into modified Newton: exact Newton still forms the tangent at every accepted trial iterate.  It changes only the length taken along the current Newton direction.
+
+For the residual-based backtracking used in the necking examples, define the dimensionless merit at the base iterate as
+\begin{equation}
+M_i=\max\left(
+\frac{\lVert\vct r_u^{(i)}\rVert_\infty}{\epsilon_{f,i}},
+\frac{\lVert\vct r_c^{(i)}\rVert_\infty}{\epsilon_{c,i}}
+\right),
+\label{eq:kkt-merit}
+\end{equation}
+where $\epsilon_{f,i}$ and $\epsilon_{c,i}$ are the absolute-plus-relative convergence tolerances evaluated at that base iterate.  Starting with $\alpha_i=1$, reduce it geometrically until the candidate is kinematically admissible and
+\begin{equation}
+M(\alpha_i)\leq (1-c\alpha_i)M_i,
+\qquad 0\leq c<1.
+\label{eq:kkt-armijo}
+\end{equation}
+Every candidate constitutive update is evaluated from the same committed pair $(\F_n,\mathcal H_n)$, exactly as for an ordinary Newton trial.  Hence a rejected candidate cannot contaminate history.  A nonpositive trial Jacobian or another recoverable local failure rejects that search length; failure to find an admissible decreasing length is itself a recoverable increment failure and may invoke pseudo-time cutback.
 
 For the linear special case $\vct R=\vct K\vct u-\vct f$, Eq.~\eqref{eq:kkt-newton} reduces directly to
 \begin{equation}
@@ -1493,7 +1518,7 @@ An important property of linear constraints is that the second block row of Eq.~
 \vct C\Delta\vct u^{(i)}
 =-(\vct C\vct u^{(i)}-\vct d).
 \end{equation}
-Therefore, after one accurately solved Newton correction the trial displacement satisfies the linear constraints to linear-solver tolerance. Subsequent corrections within the same increment satisfy $\vct C\Delta\vct u\simeq\vct0$ because $\vct d$ is fixed at the target pseudo-time.
+Therefore, after one accurately solved \emph{undamped} Newton correction the trial displacement satisfies the linear constraints to linear-solver tolerance. With Eq.~\eqref{eq:kkt-damped-update}, the constraint residual is instead multiplied by $1-\alpha_i$ and is removed over subsequent accepted corrections. Once the constraints are satisfied, subsequent corrections within the same increment satisfy $\vct C\Delta\vct u\simeq\vct0$ because $\vct d$ is fixed at the target pseudo-time.
 
 
 \subsection{Indefiniteness, solvability, and physical relevance}
@@ -1818,13 +1843,174 @@ The element algorithms provide the local residual, tangent, and trial constituti
   \end{bmatrix}.
   \end{equation*}
   For exact Newton, refresh $\vct K^{(i)}$ every iteration. For modified Newton, a previously formed tangent may be retained while stresses, residuals, and trial constitutive states are still reevaluated at every new $\vct u_{n+1}^{(i)}$.
-  \item Update $\vct u_{n+1}^{(i+1)}=\vct u_{n+1}^{(i)}+\Delta\vct u^{(i)}$ and $\vct\lambda_{n+1}^{(i+1)}=\vct\lambda_{n+1}^{(i)}+\Delta\vct\lambda^{(i)}$.
+  \item Apply the full correction, or, when globalization is enabled, select an admissible residual-reducing $\alpha_i$ by Eqs.~\eqref{eq:kkt-damped-update}--\eqref{eq:kkt-armijo}. Reevaluate every search candidate from the unchanged committed material state $\mathcal H_n$.
   \end{enumerate}
 \item On convergence, atomically commit $\vct u_{n+1}$, $\vct\lambda_{n+1}$, and the trial Gauss-point states returned by the converged element evaluations. On recoverable failure or nonconvergence, discard the entire trial endpoint and repeat the same $n\rightarrow n+1$ advance with a smaller pseudo-time increment from the unchanged committed state.
 \end{enumerate}
 \end{algorithmbox}
 
 \appendix
+\section{Example constitutive plug-in: finite-strain J2 plasticity}
+\label{app:j2-plasticity}
+
+This appendix defines one stateful material that can be supplied through the generic material-point interface.  It is deliberately outside the main formulation: none of the finite element, constraint, solution, or output equations depends on J2 plasticity.  Another material may replace this appendix's update provided it accepts the same kinematic inputs and returns the required stress, state, status, and endpoint tangent.
+
+\subsection{Kinematics, elastic response, and history}
+
+Use the multiplicative split
+\begin{equation}
+\F=\Fe\Fp,
+\qquad
+\det\Fp=1,
+\qquad
+\bs C_{\mathrm p}=\Fp^\top\Fp.
+\end{equation}
+The committed history is the inverse plastic metric $\bs C_{\mathrm p,n}^{-1}$ and accumulated equivalent plastic strain $\bar\varepsilon_{\mathrm p,n}$.  The cold state is
+\begin{equation}
+\bs C_{\mathrm p,0}^{-1}=\I,
+\qquad
+\bar\varepsilon_{\mathrm p,0}=0.
+\end{equation}
+No deformation gradient is stored as history.
+
+For elastic Jacobian $J_{\mathrm e}=\det\Fe=J$ and unimodular elastic left metric
+\begin{equation}
+\bar{\bs b}_{\mathrm e}=J^{-2/3}\F\bs C_{\mathrm p}^{-1}\F^\top,
+\qquad \det\bar{\bs b}_{\mathrm e}=1,
+\end{equation}
+the stored energy selected for this material is
+\begin{equation}
+W_{\mathrm e}
+=\frac{K}{2}(J-1)^2
++\frac{\mu}{2}\left(\tr\bar{\bs b}_{\mathrm e}-3\right).
+\label{eq:j2-energy}
+\end{equation}
+Thus the Kirchhoff stress is
+\begin{equation}
+\tauK=KJ(J-1)\I+\bs s,
+\qquad
+\bs s=\mu\dev\bar{\bs b}_{\mathrm e}.
+\label{eq:j2-kirchhoff}
+\end{equation}
+This volumetric energy is specific to this plug-in and is not the coupled logarithmic-volume neo-Hookean reference material used elsewhere.
+
+The isotropic Voce law with a linear tail is
+\begin{align}
+h(\bar\varepsilon_{\mathrm p})
+&=\sigma_{y0}+H\bar\varepsilon_{\mathrm p}
++Q\left(1-\exp[-b\bar\varepsilon_{\mathrm p}]\right),\\
+h'(\bar\varepsilon_{\mathrm p})
+&=H+Qb\exp[-b\bar\varepsilon_{\mathrm p}],
+\end{align}
+and the yield function is
+\begin{equation}
+\Phi=\lVert\bs s\rVert-\sqrt{\frac23}\,h(\bar\varepsilon_{\mathrm p}).
+\end{equation}
+Here $\lVert\bs s\rVert=\sqrt{\bs s:\bs s}$ is the spatial Frobenius norm.
+
+\subsection{Elastic predictor and radial return}
+
+At every global Newton trial, hold the committed state fixed and form
+\begin{align}
+\bar{\bs b}^{\mathrm{tr}}
+&=J_{n+1}^{-2/3}\F_{n+1}\bs C_{\mathrm p,n}^{-1}\F_{n+1}^{\top},\\
+\bs s^{\mathrm{tr}}&=\mu\dev\bar{\bs b}^{\mathrm{tr}},
+\qquad
+q^{\mathrm{tr}}=\lVert\bs s^{\mathrm{tr}}\rVert,\\
+\bar\mu&=\frac{\mu}{3}\tr\bar{\bs b}^{\mathrm{tr}}.
+\end{align}
+If $q^{\mathrm{tr}}-\sqrt{2/3}\,h(\bar\varepsilon_{\mathrm p,n})$ is not positive beyond the yield tolerance, accept the elastic predictor and leave history unchanged.  Otherwise solve the monotone scalar equation
+\begin{equation}
+r(\Delta\gamma)
+=q^{\mathrm{tr}}-2\bar\mu\Delta\gamma
+-\sqrt{\frac23}\,
+h\left(\bar\varepsilon_{\mathrm p,n}+\sqrt{\frac23}\Delta\gamma\right)=0.
+\label{eq:j2-return-scalar}
+\end{equation}
+Its derivative is
+\begin{equation}
+r'(\Delta\gamma)
+=-2\bar\mu-\frac23 h'\left(\bar\varepsilon_{\mathrm p,n}+\sqrt{\frac23}\Delta\gamma\right)<0.
+\end{equation}
+The update is
+\begin{align}
+\beta&=1-\frac{2\bar\mu\Delta\gamma}{q^{\mathrm{tr}}},
+&\bs s_{n+1}&=\beta\bs s^{\mathrm{tr}},\\
+\bar\varepsilon_{\mathrm p,n+1}
+&=\bar\varepsilon_{\mathrm p,n}+\sqrt{\frac23}\Delta\gamma.
+\end{align}
+
+The radial stress correction determines only the deviatoric part of the updated unimodular elastic metric.  Define $\bs q=\bs s_{n+1}/\mu$ and choose the unique scalar $c>-\lambda_{\min}(\bs q)$ satisfying
+\begin{equation}
+\det(\bs q+c\I)=1.
+\label{eq:j2-unimodular-root}
+\end{equation}
+Then reconstruct
+\begin{equation}
+\bar{\bs b}_{\mathrm e,n+1}=\bs q+c\I,
+\qquad
+\bs C_{\mathrm p,n+1}^{-1}
+=J_{n+1}^{2/3}\F_{n+1}^{-1}
+\bar{\bs b}_{\mathrm e,n+1}\F_{n+1}^{-\top}.
+\label{eq:j2-state-reconstruction}
+\end{equation}
+This documented spherical reconstruction leaves the radial stress correction unchanged while enforcing symmetry, positive definiteness, and $\det\bs C_{\mathrm p,n+1}^{-1}=1$ to numerical tolerance.  It avoids an ad hoc normalization of a nonsymmetric or indefinite state after the fact.
+
+Finally,
+\begin{equation}
+\Pstress_{n+1}=\tauK_{n+1}\F_{n+1}^{-\top}.
+\end{equation}
+
+\subsection{Exact linearization of the discrete update}
+
+The implemented tangent differentiates the preceding discrete return, not the continuum rate equations with frozen internal variables.  For an arbitrary direction $\bs H=\delta\F$, define
+\begin{equation}
+a=\tr(\F^{-1}\bs H),
+\qquad \delta J=Ja.
+\end{equation}
+With committed $\bs C_{\mathrm p,n}^{-1}$ fixed,
+\begin{align}
+\delta\bar{\bs b}^{\mathrm{tr}}
+={}&-\frac23a\bar{\bs b}^{\mathrm{tr}}
++J^{-2/3}\left(
+\bs H\bs C_{\mathrm p,n}^{-1}\F^\top
++\F\bs C_{\mathrm p,n}^{-1}\bs H^\top\right),\\
+\delta\bs s^{\mathrm{tr}}
+={}&\mu\dev(\delta\bar{\bs b}^{\mathrm{tr}}),\\
+\delta q^{\mathrm{tr}}
+={}&\frac{\bs s^{\mathrm{tr}}:\delta\bs s^{\mathrm{tr}}}{q^{\mathrm{tr}}},
+\qquad
+\delta\bar\mu=\frac{\mu}{3}\tr(\delta\bar{\bs b}^{\mathrm{tr}}).
+\end{align}
+On a smooth plastic branch, implicit differentiation of Eq.~\eqref{eq:j2-return-scalar} gives
+\begin{equation}
+\delta\Delta\gamma
+=\frac{\delta q^{\mathrm{tr}}-2\Delta\gamma\,\delta\bar\mu}
+{2\bar\mu+\frac23h'(\bar\varepsilon_{\mathrm p,n+1})}.
+\end{equation}
+Consequently,
+\begin{align}
+\delta\beta
+&=-2\left[
+\frac{\Delta\gamma\,\delta\bar\mu+\bar\mu\,\delta\Delta\gamma}{q^{\mathrm{tr}}}
+-\frac{\bar\mu\Delta\gamma\,\delta q^{\mathrm{tr}}}{(q^{\mathrm{tr}})^2}
+\right],\\
+\delta\bs s_{n+1}
+&=\delta\beta\,\bs s^{\mathrm{tr}}+\beta\,\delta\bs s^{\mathrm{tr}}.
+\end{align}
+On the elastic branch, simply use $\delta\bs s_{n+1}=\delta\bs s^{\mathrm{tr}}$.  Both branches finish with
+\begin{align}
+\delta\tauK
+&=K(2J-1)\delta J\,\I+\delta\bs s_{n+1},\\
+\delta\Pstress
+&=\delta\tauK\F^{-\top}
+-\tauK\F^{-\top}\bs H^\top\F^{-\top}.
+\label{eq:j2-tangent-action}
+\end{align}
+Equation~\eqref{eq:j2-tangent-action} is evaluated for the nine Cartesian basis directions to populate $A^{\mathrm{alg}}_{iIjJ}$.  This is an analytic directional construction of the exact algorithmic tangent; it is not finite differencing.  At the elastic--plastic switching surface the update is nonsmooth and a unique classical tangent is not required.  Centered finite differences away from that surface remain the independent verification oracle.
+
+The trial state produced above is committed only after global convergence.  A cutback repeats the update from the unchanged $\bs C_{\mathrm p,n}^{-1}$ and $\bar\varepsilon_{\mathrm p,n}$.
+
 \section{Additional tangent remarks and crystal-plasticity differentiation}
 \label{app:tangent-notes}
 \subsection{Increment notation versus endpoint notation}
@@ -2162,6 +2348,8 @@ When this expression is pushed forward to the current configuration, the same ma
 \section{References}
 
 The principal formulation/notation reference is T. Belytschko, W. K. Liu, B. Moran, and K. Elkhodary, \emph{Nonlinear Finite Elements for Continua and Structures}, 2nd ed., Wiley, 2014.
+
+The finite-strain J2 example in Appendix~\ref{app:j2-plasticity} follows the multiplicative hyperelastic-plastic framework and radial-return structure of J. C. Simo, ``Algorithms for static and dynamic multiplicative plasticity that preserve the classical return mapping schemes of the infinitesimal theory,'' \emph{Computer Methods in Applied Mechanics and Engineering}, 99, 61--112 (1992).  Its determinant-one spherical reconstruction is stated explicitly in Eqs.~\eqref{eq:j2-unimodular-root}--\eqref{eq:j2-state-reconstruction} as part of this solver's discrete material definition.
 
 For volume-constraint projection and nearly incompressible finite deformation, useful references include J. C. Simo, R. L. Taylor, and K. S. Pister, ``Variational and projection methods for the volume constraint in finite deformation elasto-plasticity,'' \emph{Computer Methods in Applied Mechanics and Engineering}, 51, 177--208 (1985); E. A. de Souza Neto, D. Peri\'{c}, M. Dutko, and D. R. J. Owen, ``Design of simple low order finite elements for large strain analysis of nearly incompressible solids,'' \emph{International Journal of Solids and Structures}, 33, 3277--3296 (1996); and T. Elguedj, Y. Bazilevs, V. M. Calo, and T. J. R. Hughes, ``$\bar B$ and $\bar F$ projection methods for nearly incompressible linear and nonlinear elasticity and plasticity using higher-order NURBS elements,'' \emph{Computer Methods in Applied Mechanics and Engineering}, 197, 2732--2762 (2008).
 

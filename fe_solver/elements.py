@@ -5,6 +5,7 @@ import numpy as np
 from .materials import evaluate_material_point
 from .quadrature import HEX20_POINTS, HEX20_WEIGHTS, HEX8_POINTS, HEX8_WEIGHTS
 from .shape import hex20_shape, hex8_shape
+from .tangents import truesdell_voigt
 from .types import (
     ElementRequest,
     ElementResponse,
@@ -67,21 +68,6 @@ def _stress_voigt(sigma: np.ndarray) -> np.ndarray:
     return np.asarray([sigma[i, j] for i, j in _VOIGT_PAIRS])
 
 
-def _truesdell_voigt(A: np.ndarray, F: np.ndarray, J: float, sigma: np.ndarray) -> np.ndarray:
-    a_pf = np.einsum("iIkK,jI,mK->ijkm", A, F, F) / J
-    identity = np.eye(3)
-    c = 0.5 * (
-        a_pf + a_pf.transpose(0, 1, 3, 2)
-        - np.einsum("ik,mj->ijkm", identity, sigma)
-        - np.einsum("im,kj->ijkm", identity, sigma)
-    )
-    D = np.empty((6, 6))
-    for row, (i, j) in enumerate(_VOIGT_PAIRS):
-        for col, (k, m) in enumerate(_VOIGT_PAIRS):
-            D[row, col] = c[i, j, k, k] if k == m else 0.5 * (c[i, j, k, m] + c[i, j, m, k])
-    return D
-
-
 def evaluate_standard_element(request: ElementRequest) -> ElementResponse:
     shape, points, weights = _quadrature(request.formulation)
     X = np.asarray(request.X_e, dtype=float)
@@ -127,7 +113,7 @@ def evaluate_standard_element(request: ElementRequest) -> ElementResponse:
         f += B.T @ _stress_voigt(sigma) * dv
         if K is not None:
             assert response.A_alg is not None
-            D = _truesdell_voigt(response.A_alg, F, J, sigma)
+            D = truesdell_voigt(response.A_alg, F, J, sigma)
             K += B.T @ D @ B * dv
             K += np.kron(grad_x @ sigma @ grad_x.T * dv, np.eye(3))
         output.F_raw.append(F.copy())
@@ -210,7 +196,7 @@ def evaluate_fbar_element(request: ElementRequest) -> ElementResponse:
         f += B.T @ _stress_voigt(sigma) * dv
         if K is not None:
             assert response.A_alg is not None
-            D = _truesdell_voigt(response.A_alg, Fbar, Jc, sigma)
+            D = truesdell_voigt(response.A_alg, Fbar, Jc, sigma)
             Bbar = B.copy()
             volumetric = np.array([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
             for b in range(8):

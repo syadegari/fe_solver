@@ -213,6 +213,14 @@ The default cold start is the stress-free reference configuration with `u_0 = 0`
 
 The solver owns stress-measure and tangent transformations. A material returns first Piola-Kirchhoff stress and `dP/dF` only.
 
+### 5.4 Standalone material-point path driver
+
+Provide a solver-independent verification driver that accepts a registered material, either a target `3 x 3` deformation gradient or a callable path `F(s)`, and a positive number of equal path increments. It must call the material initializer once, advance from `s=0` to `s=1`, and commit each successful local state before the next local increment. This sequential local history is deliberate and is distinct from the global Newton rule, where every trial within one global increment starts from the same committed state.
+
+The driver records `F`, `P`, Kirchhoff and Cauchy stress, Green--Lagrange, Euler--Almansi, material and spatial logarithmic strain, packed material state, and, when requested, `dP/dF` and its current-configuration Truesdell form. These are verification arrays rather than solver HDF5 fields; recording `F` here does not change the rule that production output reconstructs `F` from nodal displacement. A state-free material skips initialization and uses an empty state.
+
+The J2 characterization utility must exercise at least 400 increments to 10% isochoric logarithmic uniaxial strain and 400 increments to `F12=0.1` simple shear, compare final values against 200-increment histories, save machine-readable arrays and CSV tables, and plot stress, equivalent plastic strain, and representative elastic/plastic tangent components.
+
 ---
 
 ## 6. Reference material: compressible neo-Hookean
@@ -257,6 +265,48 @@ There is no material state: `n_state = 0`.
 If `J <= 0` or the deformation is numerically invalid, return a recoverable trial failure. Do not return NaNs and continue assembly.
 
 Unit tests must compare the analytic `A_alg` with centered finite differences of the complete `P(F)` evaluation.
+
+---
+
+## 6A. Optional stateful example: finite-strain J2 plasticity
+
+The mathematical definition is isolated in Appendix A of `FORMULATION.tex`; it is not part of the generic FE formulation. Register this plug-in as:
+
+```text
+root:       j2_plasticity
+initializer: init_j2_plasticity
+update:      update_j2_plasticity
+```
+
+Required immutable properties are:
+
+```text
+shear_modulus
+bulk_modulus
+initial_yield_stress
+linear_hardening_modulus
+saturation_increment
+saturation_rate
+```
+
+Reject missing or unknown properties. The two elastic moduli and initial yield stress must be positive; hardening parameters must be nonnegative. All values must be finite.
+
+The packed history layout is:
+
+```text
+plastic_metric_inverse       shape (6,), order 11,22,33,12,23,13, tensorial shear
+equivalent_plastic_strain    scalar
+```
+
+Initialize these fields to `[1,1,1,0,0,0]` and zero. The update must reconstruct the full symmetric tensor, reject a non-finite, non-positive-definite committed metric, and return a recoverable failure for invalid trial kinematics or local nonconvergence.
+
+The update is the radial return and determinant-one state reconstruction specified in the formulation appendix. Solve the scalar plastic multiplier from the committed state with at most 30 Newton iterations and a scale-aware residual tolerance of `1e-12`. Enforce a nonnegative multiplier and reject a nonpositive radial stress scale. The determinant-one spherical scalar is the positive-definite root of the cubic determinant equation; bracket it and use a fixed 80 bisections so its result is deterministic.
+
+When `need_tangent=true`, construct `A_alg` by applying the appendix's exact directional linearization to all nine Cartesian basis perturbations of `F_np1`. This is an analytic algorithmic tangent, not a finite-difference production option. `need_tangent=false` must return identical stress, state, and status.
+
+Required material tests cover validation and initialization, hydrostatic elastic loading, plastic consistency, elastic unloading, rotational covariance, state symmetry/positive-definiteness/unit determinant, and centered finite-difference checks of all smooth elastic and plastic tangent branches. Required element tests exercise a yielded standard Hex8 and Hex8-Fbar tangent from the same committed state. Restart and cutback tests must include a nonzero plastic state.
+
+The HDF5 result stores both state fields at element centroids. The six-component plastic metric carries the same component-order metadata as reported symmetric stress and strain. Do not store an additional J2/von-Mises stress field; it is derived from the saved Cauchy stress during postprocessing.
 
 ---
 
@@ -757,7 +807,42 @@ At every global iteration:
 
 A new increment attempt must have a valid tangent/factorization before its first correction unless an explicit safe reuse policy is implemented.
 
-### 16.3 State commit
+### 16.3 Optional Newton backtracking
+
+The baseline remains the undamped update. When `line_search = "backtracking"`, treat the KKT solution as a search direction and test
+
+```text
+u_candidate      = u_i      + alpha * delta_u
+lambda_candidate = lambda_i + alpha * delta_lambda
+alpha            = 1, rho, rho^2, ...
+```
+
+Every candidate assembly must integrate its material response from the unchanged committed state at `n`. A recoverable error such as an invalid current element Jacobian rejects that candidate and reduces `alpha`; it does not immediately cut back pseudo-time. For an admissible candidate, use the merit
+
+$$
+M_i=\max\left(\frac{\|\boldsymbol r_u\|_\infty}{\epsilon_{f,i}},
+               \frac{\|\boldsymbol r_c\|_\infty}{\epsilon_{c,i}}\right),
+$$
+
+where the two denominators are the convergence tolerances evaluated at the base iterate. Accept the first candidate satisfying
+
+$$
+M(\alpha)\le (1-c\alpha)M_i.
+$$
+
+If no admissible residual-reducing candidate exists at or above `line_search_min_alpha`, report a recoverable global failure and let the normal increment cutback logic restart from the committed state. For exact Newton, a candidate assembly may compute and retain its tangent for the next iteration; this is still exact Newton because the retained tangent belongs to the accepted candidate iterate. Log the accepted `alpha`, number of trials/backtracks, candidate merit, count of recoverable candidate rejections, and the last such failure message in the standalone JSON history.
+
+Supported controls and defaults are:
+
+```toml
+line_search = "none"              # or "backtracking"
+line_search_reduction = 0.5
+line_search_armijo = 1.0e-4
+line_search_min_alpha = 1.0e-4
+line_search_max_backtracks = 14
+```
+
+### 16.4 State commit
 
 At iteration `i`, always integrate
 
@@ -1357,6 +1442,43 @@ For both cases require positive material-point `J`, global equilibrium, periodic
 volume-average `F` equal to the prescribed macro deformation. Also require a resolved nonzero displacement
 fluctuation from the affine field and a nonzero difference between the core and matrix mean stresses. The HDF5 output
 must retain the two blocks/material definitions so these fields can be selected separately in postprocessing.
+
+### 23.5 Case E: finite-strain J2 circular-bar necking
+
+This is a system-level benchmark for the optional Appendix-A material plug-in, not a replacement for material-point verification. Use a one-eighth model: a quarter circular cross-section over half the specimen length. With full length `L = 53.334 mm`, end radius `R = 6.413 mm`, and axial coordinate `0 <= z <= L/2` measured from the middle plane, generate
+
+$$
+r(z)=R\left(0.982+0.036z/L\right).
+$$
+
+The initial middle radius is therefore `6.297566 mm`. Generate a structured all-Hex8 mesh with a three-block quarter-disk topology: a regular central square and two outer transfinite sectors meeting along the 45-degree radial line. This avoids both collapsed axis elements and the highly skewed 45-degree surface cells produced when two edges of one square block are mapped onto the same circular boundary. The baseline cross-section uses four divisions along each central-square edge and three divisions through each outer sector, giving 40 quadrilaterals. Extrude these through 24 axial layers, giving 960 Hex8 elements. Put 12 axial layers in `0 <= z <= L/6` and 12 in `L/6 <= z <= L/2`. The generator must expose Physical Groups
+
+```text
+solid, symmetry_x, symmetry_y, midplane, loaded_end, outer_surface, neck_monitor
+```
+
+Use `hex8_fbar`. Prescribe `ux=0` on `symmetry_x`, `uy=0` on `symmetry_y`, `uz=0` on `midplane`, and `uz=7 mm` on `loaded_end`; leave transverse end displacement and the outer surface free. Seven millimetres on the half-model represents 14 mm total end-to-end elongation of the mirrored specimen.
+
+Use the millimetre--newton--MPa property set:
+
+```text
+shear_modulus = 80193.8
+bulk_modulus = 164210.0
+initial_yield_stress = 450.0
+linear_hardening_modulus = 129.24
+saturation_increment = 265.0
+saturation_rate = 16.93
+```
+
+Use 50 base load increments and save exact states at end elongations 1 through 7 mm. Required checks are positive material-point Jacobians, constraint satisfaction, force balance, plastic localization at the middle, and a force--elongation curve that resolves the load maximum. Derive total end reaction, current middle radius, and the radial displacement of `neck_monitor` from stored nodal fields; do not duplicate them as solver-native datasets.
+
+The published target radial displacement at 7 mm half-model elongation is approximately `-3.740 mm`; the cited ANSYS 3D discretization reports approximately `-3.801 mm`. Record both as external references. Because that model uses a reduced-integration mixed element rather than this solver's F-bar element, require a two-level mesh-convergence study before adopting a numerical tolerance. The helper `verification/check_j2_necking.py` reports the complete observable history and enables an explicit reference-tolerance check when requested.
+
+### 23.6 Small J2 square-prism diagnostic
+
+Maintain a cheap qualitative companion to Case E for nonlinear-solver diagnosis. It uses the same half-length, material, axial grading, 1.8% linear middle imperfection, symmetry conditions, and 7 mm end displacement, but replaces the quarter circle by a quarter square with two elements in each transverse direction and 24 axial layers: 96 Hex8-Fbar elements total. Choose the end half-width `R sqrt(pi)/2`, so the complete square has the same end area as the reference circle. This case is not a substitute for the circular benchmark and has no published displacement target; its purposes are to reproduce plastic localization and exercise Newton globalization quickly.
+
+Use residual-based backtracking for both J2 necking decks. The diagnostic utilities must support (a) material and element tangent checks using evolved Gauss-point states from restart/output data and (b) dense null-space/SVD inspection of the reduced tangent only for this deliberately small model. Dense matrices remain prohibited in the production solver.
 
 ---
 

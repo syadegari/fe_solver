@@ -190,6 +190,17 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
                             AttributeType=_attribute_type(tuple(dataset.shape)),
                             Center="Cell",
                         )
+                        if "component_order" in dataset.attrs:
+                            labels = [
+                                item.decode() if isinstance(item, bytes) else str(item)
+                                for item in dataset.attrs["component_order"]
+                            ]
+                            ET.SubElement(
+                                attribute,
+                                "Information",
+                                Name="component_order",
+                                Value=",".join(labels),
+                            )
                         _time_slice(
                             attribute, tuple(dataset.shape), step,
                             f"{sidecar_ref}:/results/blocks/{name}/state/{state_name}",

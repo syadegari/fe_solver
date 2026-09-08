@@ -27,10 +27,15 @@ class EvaluationStatus:
 class StateField:
     name: str
     shape: tuple[int, ...] = ()
+    component_order: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.name or any(int(n) <= 0 for n in self.shape):
             raise ValueError("invalid material state field")
+        if self.component_order and (
+            len(self.shape) != 1 or len(self.component_order) != self.shape[0]
+        ):
+            raise ValueError("material state component labels do not match the field shape")
 
     @property
     def size(self) -> int:

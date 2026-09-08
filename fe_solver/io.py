@@ -159,7 +159,14 @@ class HDF5ResultWriter:
             group.attrs["model"] = material.model_root
             group.attrs["properties_json"] = _json(dict(material.properties))
             group.attrs["state_layout_json"] = _json(
-                [{"name": field.name, "shape": field.shape} for field in material.state_layout.fields]
+                [
+                    {
+                        "name": field.name,
+                        "shape": field.shape,
+                        "component_order": field.component_order,
+                    }
+                    for field in material.state_layout.fields
+                ]
             )
 
         curves = root.create_group("curves")
@@ -202,6 +209,12 @@ class HDF5ResultWriter:
                 )
                 dataset.attrs["centering"] = "cell"
                 dataset.attrs["recovery"] = stress.attrs["recovery"]
+                if field.component_order:
+                    dataset.attrs["component_order"] = np.asarray(
+                        field.component_order, dtype=h5py.string_dtype()
+                    )
+                    dataset.attrs["shear_convention"] = "tensorial"
+                    dataset.attrs["shear_scale"] = 1.0
         root.flush()
 
     def _time_datasets(self) -> list[h5py.Dataset]:

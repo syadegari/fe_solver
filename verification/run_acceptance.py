@@ -13,6 +13,7 @@ from fe_solver.assembly import assemble_internal
 from fe_solver.config import Deck, load_deck
 from fe_solver.output_fields import unpack_symmetric
 from fe_solver.solver import AnalysisResult, run_analysis
+from verification.check_j2_necking import extract_history
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,11 @@ DEFAULT_DECKS = [
     "case_b_hex8.toml", "case_b_hex8_fbar.toml",
     "frame_objectivity_hex8.toml",
     "periodic_core_isochoric_hex8_fbar.toml", "periodic_core_shear_hex8_fbar.toml",
+]
+AVAILABLE_DECKS = [
+    *DEFAULT_DECKS,
+    "j2_necking_bar_hex8_fbar.toml",
+    "j2_necking_prism_small_hex8_fbar.toml",
 ]
 
 
@@ -33,7 +39,7 @@ def run_deck(name: str, output_root: Path) -> AnalysisResult:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--deck", action="append", choices=DEFAULT_DECKS)
+    parser.add_argument("--deck", action="append", choices=AVAILABLE_DECKS)
     parser.add_argument("--output-root", type=Path, default=Path("/tmp/fe_solver_acceptance"))
     args = parser.parse_args()
     names = args.deck or DEFAULT_DECKS
@@ -49,8 +55,18 @@ def main() -> None:
             "total_cutbacks": sum(item.cutbacks for item in result.increments),
             **result.verification,
         }
-        if summary[name]["total_cutbacks"] != 0:
+        if name != "j2_necking_bar_hex8_fbar.toml" and summary[name]["total_cutbacks"] != 0:
             raise RuntimeError(f"acceptance deck {name} required an unintended cutback")
+
+    if "j2_necking_bar_hex8_fbar.toml" in results:
+        history = extract_history(output_root / "j2_necking_bar_hex8_fbar/run.h5")
+        elongation = np.asarray(history["end_elongation"])
+        plastic_strain = np.asarray(history["maximum_equivalent_plastic_strain"])
+        if abs(elongation[-1] - 7.0) > 1.0e-10:
+            raise RuntimeError("J2 necking benchmark did not reach 7 mm end elongation")
+        if plastic_strain[-1] <= 0.0 or np.any(np.diff(plastic_strain) < -1.0e-12):
+            raise RuntimeError("J2 necking benchmark has invalid accumulated plastic strain")
+        summary["j2_necking_history"] = history
 
     if "frame_objectivity_hex8.toml" in results:
         path = output_root / "frame_objectivity_hex8/run.h5"
