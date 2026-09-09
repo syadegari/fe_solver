@@ -486,6 +486,13 @@ def plot_prism_histories(
     for axis in axes.flat:
         axis.grid(True, alpha=0.25)
         axis.legend()
+    common_time = min(float(history.time[-1]) for history in histories)
+    common_elongation = min(
+        float(np.interp(common_time, history.time, history.end_elongation))
+        for history in histories
+    )
+    for axis in axes.flat:
+        axis.set_xlim(left=0.0, right=common_elongation)
     axes[1, 1].axhline(1.0, color="0.35", linewidth=0.8, linestyle="--")
     axes[1, 2].axhline(1.0, color="0.35", linewidth=0.8, linestyle="--")
     fig.suptitle("Small J2 necking prism: standard Hex8 versus centroidal F-bar")

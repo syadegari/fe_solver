@@ -93,7 +93,12 @@ def elastic_poisson_ratio(shear_modulus: float, bulk_modulus: float) -> float:
     )
 
 
-def build_case_deck(case_name: str, *, restart_from: str = "") -> Deck:
+def build_case_deck(
+    case_name: str,
+    *,
+    restart_from: str = "",
+    output_directory: str | Path | None = None,
+) -> Deck:
     try:
         case = CASES[case_name]
     except KeyError as exc:
@@ -105,7 +110,11 @@ def build_case_deck(case_name: str, *, restart_from: str = "") -> Deck:
     data["mesh"]["file"] = case.mesh_file
     data["materials"][0]["properties"]["bulk_modulus"] = case.bulk_modulus
     data["element_assignments"][0]["formulation"] = case.formulation
-    data["output"]["directory"] = case.output_directory
+    data["output"]["directory"] = (
+        str(Path(output_directory).resolve())
+        if output_directory is not None
+        else case.output_directory
+    )
     data["restart"]["restart_from"] = restart_from
     return Deck(base.path, data, base.curves)
 
@@ -134,6 +143,10 @@ def main(argv: list[str] | None = None) -> None:
         "--restart-from", default="",
         help="restart file, resolved relative to the selected base deck",
     )
+    parser.add_argument(
+        "--output-directory", type=Path, default=None,
+        help="override the case output directory (recommended for study batches)",
+    )
     parser.add_argument("--num-processes", type=int, default=1)
     parser.add_argument("--debug-timing", action="store_true")
     parser.add_argument(
@@ -147,7 +160,11 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("--case is required unless --list-cases is used")
     try:
         result = run_analysis(
-            build_case_deck(args.case, restart_from=args.restart_from),
+            build_case_deck(
+                args.case,
+                restart_from=args.restart_from,
+                output_directory=args.output_directory,
+            ),
             stop_time=args.stop_time,
             num_processes=args.num_processes,
             debug_timing=args.debug_timing,

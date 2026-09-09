@@ -63,6 +63,13 @@ Bootstrap and automation are intentionally deferred until the first long run tha
 
 The first remote script should create a unique run directory and record the command, Git revision, dirty-tree fingerprint, environment-lock hash, host and package information, elapsed time, exit status, concise summary, full log, and requested output artifacts.
 
+The J2 formulation study is the first workload to use this policy.  Its exact
+Python package set is recorded in
+`requirements-j2-study-linux-x86_64.lock`, and
+`verification.run_j2_formulation_batch` creates the required resumable run
+bundle and provenance manifest.  SSH aliases, remote paths, and remote
+interpreter details remain local-only inputs to the transfer/launch command.
+
 ## Public execution boundary
 
 The personal remote worker may run trusted branches and manually launched jobs. It must not execute arbitrary code from public pull requests. Public CI should use hosted runners or disposable, isolated workers with narrowly scoped credentials.

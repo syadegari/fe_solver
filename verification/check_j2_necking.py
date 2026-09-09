@@ -9,12 +9,15 @@ from typing import Any
 import h5py
 import numpy as np
 
+from verification.check_j2_prism import _coordinate_groups, _load_solver_summary
+
 
 REFERENCE_RADIAL_DISPLACEMENT = -3.740
 
 
 def extract_history(database: str | Path) -> dict[str, Any]:
-    with h5py.File(Path(database), "r") as archive:
+    database_path = Path(database)
+    with h5py.File(database_path, "r") as archive:
         complete = int(archive["results"].attrs["n_complete_steps"])
         times = np.asarray(archive["results/time"][:complete], dtype=float)
         X = np.asarray(archive["mesh/reference_coordinates"], dtype=float)
@@ -26,6 +29,15 @@ def extract_history(database: str | Path) -> dict[str, Any]:
         if "equivalent_plastic_strain" not in state:
             raise RuntimeError("benchmark database has no equivalent_plastic_strain field")
         ep = np.asarray(state["equivalent_plastic_strain"][:complete], dtype=float)
+        connectivity = np.asarray(
+            archive["mesh/blocks/0000/connectivity"], dtype=np.int64
+        )
+        analysis_name = str(archive["meta"].attrs["analysis_name"])
+        formulation = str(archive["mesh/blocks/0000"].attrs["formulation"])
+        resolved_input = archive["meta/resolved_input_json"][()]
+        if isinstance(resolved_input, bytes):
+            resolved_input = resolved_input.decode("utf-8")
+        history_file = str(json.loads(str(resolved_input))["output"]["history_file"])
 
     scale = max(float(np.max(np.abs(X))), 1.0)
     tolerance = 1.0e-10 * scale
@@ -35,6 +47,9 @@ def extract_history(database: str | Path) -> dict[str, Any]:
         np.argmax(X[middle_nodes, 0] - 1.0e3 * np.abs(X[middle_nodes, 1]))
     ]
     current = X[None, :, :] + u
+    element_centers = np.mean(X[connectivity], axis=1)
+    _, element_layers = _coordinate_groups(element_centers[:, 2])
+    maximum_ep_element = np.argmax(ep, axis=1)
     # The axis itself has zero radius; monitor the outer middle-section nodes.
     initial_middle_radius = np.sqrt(X[middle_nodes, 0] ** 2 + X[middle_nodes, 1] ** 2)
     surface = middle_nodes[np.isclose(initial_middle_radius, initial_middle_radius.max(), rtol=0, atol=tolerance)]
@@ -53,6 +68,10 @@ def extract_history(database: str | Path) -> dict[str, Any]:
         else None
     )
     return {
+        "database": str(database_path),
+        "analysis_name": analysis_name,
+        "formulation": formulation,
+        "solver": _load_solver_summary(database_path, history_file),
         "complete_states": int(len(times)),
         "final_time": float(times[-1]),
         "time": times.tolist(),
@@ -60,7 +79,18 @@ def extract_history(database: str | Path) -> dict[str, Any]:
         "end_reaction_z": np.sum(reaction[:, end_nodes, 2], axis=1).tolist(),
         "middle_radius": middle_radius.tolist(),
         "monitor_radial_displacement": u[:, monitor, 0].tolist(),
-        "maximum_equivalent_plastic_strain": np.max(ep, axis=tuple(range(1, ep.ndim))).tolist(),
+        "maximum_equivalent_plastic_strain": np.max(
+            ep, axis=tuple(range(1, ep.ndim))
+        ).tolist(),
+        "maximum_plastic_strain_initial_z": element_centers[
+            maximum_ep_element, 2
+        ].tolist(),
+        "middle_layer_mean_equivalent_plastic_strain": np.mean(
+            ep[:, element_layers[0]], axis=1
+        ).tolist(),
+        "end_layer_mean_equivalent_plastic_strain": np.mean(
+            ep[:, element_layers[-1]], axis=1
+        ).tolist(),
         "reference_final_radial_displacement": REFERENCE_RADIAL_DISPLACEMENT,
         "final_relative_reference_error": reference_error,
     }

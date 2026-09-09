@@ -24,6 +24,7 @@ from fe_solver.shape import hex20_shape, hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import ModelError, RecoverableError
 from verification.check_j2_prism import compare_prism_histories, extract_prism_history
+from verification.run_j2_formulation_batch import latest_restart
 from verification.run_j2_formulation_study import build_case_deck
 
 
@@ -174,6 +175,29 @@ class MeshConstraintTests(unittest.TestCase):
         mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
         model = build_model(deck, mesh)
         self.assertEqual(model.blocks[0].state_n.shape[:2], (96, 27))
+
+    def test_j2_formulation_study_isolates_output_and_selects_latest_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "isolated-output"
+            deck = build_case_deck("coarse_hex20", output_directory=output)
+            self.assertEqual(deck.data["output"]["directory"], str(output.resolve()))
+
+            restart_directory = output / "restart"
+            restart_directory.mkdir(parents=True)
+            for index, restart_time in enumerate((0.1, 0.4, 0.5), start=1):
+                with h5py.File(
+                    restart_directory / f"restart_{index:06d}.h5", "w"
+                ) as archive:
+                    archive.attrs["t_n"] = restart_time
+            self.assertEqual(
+                latest_restart(output, at_most=0.45),
+                restart_directory / "restart_000002.h5",
+            )
+            self.assertEqual(
+                latest_restart(output, at_most=0.5),
+                restart_directory / "restart_000003.h5",
+            )
 
     def test_affine_boundary_and_exact_macro_paths(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")

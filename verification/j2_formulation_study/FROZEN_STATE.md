@@ -2,10 +2,16 @@
 
 Frozen on 2026-09-08 before the J2 Numba feasibility investigation.
 
-The formulation-study implementation is preserved on branch
-`investigation/j2-formulation-study`.  Do not mix JIT implementation changes or
-JIT-generated results into that branch.  The code checkpoint preceding this
-status file is commit `a14b735` (`Add J2 element formulation study matrix`).
+Resumed on 2026-09-09 after the verified Numba implementation was
+fast-forwarded into this branch at commit `aea6655`.  Material-point, element,
+serial/process, restart, and full-solver comparisons found only roundoff-level
+differences, so the outstanding production runs use the explicit `numba`
+backend.  The pre-Numba databases remain valid study evidence.
+
+The formulation-study implementation is on branch
+`investigation/j2-formulation-study`.  The original code checkpoint preceding
+this status file is commit `a14b735` (`Add J2 element formulation study
+matrix`).
 
 ## Completed implementation and checks
 
@@ -92,17 +98,36 @@ run.  The preferred order is:
    `t=0.5` and then to `t=1`.
 5. Run `refined_circular_hex8_fbar` first through `t=0.5` and then to `t=1`.
 
-For a cold square-prism gate, use:
+The preferred resumable batch command for the complete gate is:
 
 ```bash
-/usr/bin/time -v conda run --no-capture-output -n py3.14 \
-  python -m verification.run_j2_formulation_study \
-  --case CASE --num-processes 2 --debug-timing --stop-time 0.5
+conda run --no-capture-output -n py3.14 \
+  python -m verification.run_j2_formulation_batch \
+  --run-root examples/results/j2_formulation_study_numba \
+  --phase gate --num-processes N \
+  --circular-restart /absolute/path/to/restart_000002.h5
 ```
 
-Continue a gated run by passing the highest retained `t=0.5` restart to
-`--restart-from` and omitting `--stop-time`.  Keep long-run terminal timing
-output with the corresponding case results.
+The circular seed is the frozen baseline's durable `t=0.4` restart.  The batch
+uses separate result directories and therefore does not truncate the frozen
+partial circular database.  Re-run an interrupted phase with `--resume` and
+the same arguments; it selects the latest retained per-case restart and skips
+cases that already reached the phase endpoint.
+
+After inspecting the `t=0.5` gate report, continue the same run root with:
+
+```bash
+conda run --no-capture-output -n py3.14 \
+  python -m verification.run_j2_formulation_batch \
+  --run-root examples/results/j2_formulation_study_numba \
+  --phase complete --num-processes N --resume
+```
+
+Both phases use one BLAS/OpenMP thread per element worker, capture verbose
+`/usr/bin/time` output, tee the solver output into per-attempt logs, and update
+an on-disk provenance manifest after every state change.  The exact Python
+package versions used for the Linux x86_64 worker are pinned in
+`requirements-j2-study-linux-x86_64.lock`.
 
 ## Outstanding comparisons and diagnostic extraction
 
@@ -130,11 +155,20 @@ plastic localization, nonlinear work, and timing quantities.
 ParaView views may be made afterward with identical accepted time, warp,
 camera, and color scale.  They are supporting visual evidence only.
 
+Generate the direct-HDF5 gate or final report and plots with:
+
+```bash
+conda run --no-capture-output -n py3.14 \
+  python -m verification.summarize_j2_formulation_study \
+  --run-root examples/results/j2_formulation_study_numba \
+  --expected-time 0.5
+```
+
+Use `--expected-time 1.0` after the completion phase.  The summarizer rejects
+missing or endpoint-inconsistent result databases.
+
 ## Resumption rule
 
-After the Numba feasibility decision, resume this study from the frozen branch
-or merge only a verified, numerically equivalent acceleration commit into it.
-Do not compare a JIT result with a pure-Python result until material-point,
-element, serial/process, restart, and full-solver equivalence checks have
-passed.  Numba feasibility outputs must use separate directories so none of
-the frozen databases above are overwritten.
+The Numba equivalence prerequisite has been satisfied.  All new production
+outputs must still use the isolated batch run root so none of the frozen
+databases above are overwritten.

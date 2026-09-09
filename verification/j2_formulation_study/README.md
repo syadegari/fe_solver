@@ -1,8 +1,9 @@
 # J2 element-formulation study protocol
 
 The implementation and outstanding-run state was frozen before the J2 JIT
-feasibility investigation; see `FROZEN_STATE.md` for completed result
-fingerprints, remaining runs, and resumption rules.
+feasibility investigation, then resumed after the verified Numba acceleration
+was merged.  See `FROZEN_STATE.md` for completed result fingerprints,
+remaining runs, and resumption rules.
 
 This study separates four numerical axes while keeping every unlisted input fixed. Case definitions are constructed from the checked-in square-prism or circular-bar base deck by `verification.run_j2_formulation_study`; they are not independent copies that can silently drift.
 
@@ -24,7 +25,38 @@ List the exact case matrix:
 python -m verification.run_j2_formulation_study --list-cases
 ```
 
-Use `--stop-time 0.5` for the initial admissibility gate. A complete square-prism case is launched as:
+Run every outstanding case to the initial `t=0.5` admissibility gate in an
+isolated, resumable bundle with:
+
+```bash
+conda run --no-capture-output -n py3.14 \
+  python -m verification.run_j2_formulation_batch \
+  --run-root examples/results/j2_formulation_study_numba \
+  --phase gate --num-processes N \
+  --circular-restart /absolute/path/to/restart_000002.h5
+```
+
+Repeat with `--resume` after interruption.  After inspecting the gate report,
+resume every gated database to `t=1` with `--phase complete --resume`.  The
+batch defaults to the verified Numba backend, constrains nested numerical
+libraries to one thread per worker, retains full solver and `/usr/bin/time`
+logs, and writes a provenance manifest.  `--num-processes` remains an explicit
+user choice.
+
+Generate all direct-HDF5 comparisons and plots with:
+
+```bash
+conda run --no-capture-output -n py3.14 \
+  python -m verification.summarize_j2_formulation_study \
+  --run-root examples/results/j2_formulation_study_numba \
+  --expected-time 0.5
+```
+
+Use `--expected-time 1.0` for the final report.  The report generator rejects
+missing or endpoint-inconsistent databases.
+
+To run just one case outside the batch, use `--stop-time 0.5` for its initial
+gate. A complete square-prism case is launched as:
 
 ```bash
 /usr/bin/time -v conda run --no-capture-output -n py3.14 \
@@ -32,7 +64,7 @@ Use `--stop-time 0.5` for the initial admissibility gate. A complete square-pris
   --case CASE --num-processes 2 --debug-timing --j2-backend numba
 ```
 
-Omit `--j2-backend numba` to retain the interpreted reference path.  Backend
+Omit `--j2-backend numba` to retain the interpreted reference path. Backend
 choice is written to the execution section of `run_log.json` and does not
 change material or restart identity.
 
@@ -42,7 +74,7 @@ Resume into the same result database by selecting a durable checkpoint:
 /usr/bin/time -v conda run --no-capture-output -n py3.14 \
   python -m verification.run_j2_formulation_study \
   --case CASE --restart-from RELATIVE_OR_ABSOLUTE_RESTART_H5 \
-  --num-processes 2 --debug-timing
+  --num-processes 2 --debug-timing --j2-backend numba
 ```
 
 If the result database extends beyond the selected checkpoint, resume first rolls every time-dependent dataset and the
