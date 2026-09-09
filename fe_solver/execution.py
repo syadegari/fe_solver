@@ -14,6 +14,7 @@ from typing import Iterable, Iterator
 import numpy as np
 
 from .elements import evaluate_element
+from .j2_kernel import active_j2_backend, available_j2_backends, configure_j2_backend
 from .types import ElementRequest, ElementResponse, MaterialDefinition, MaterialModel, ModelError
 
 
@@ -58,6 +59,7 @@ class _SerializableMaterial:
 @dataclass(frozen=True)
 class ExecutionInfo:
     element_backend: str
+    j2_backend: str
     requested_processes: int
     effective_processes: int
     available_physical_cores: int | None
@@ -73,12 +75,15 @@ _WORKER_MATERIALS: tuple[MaterialDefinition, ...] = ()
 _WORKER_THREAD_LIMITER: object | None = None
 
 
-def _initialize_worker(materials: tuple[_SerializableMaterial, ...]) -> None:
+def _initialize_worker(
+    materials: tuple[_SerializableMaterial, ...], j2_backend: str
+) -> None:
     """Rebuild immutable material definitions and prevent nested BLAS pools."""
     global _WORKER_MATERIALS, _WORKER_THREAD_LIMITER
     from threadpoolctl import threadpool_limits
 
     _WORKER_THREAD_LIMITER = threadpool_limits(limits=1)
+    configure_j2_backend(j2_backend)
     _WORKER_MATERIALS = tuple(
         MaterialDefinition(
             material.name,
@@ -122,7 +127,14 @@ def _process_context() -> mp.context.BaseContext:
 class ElementExecutor:
     """Persistent serial or process executor for complete element kernels."""
 
-    def __init__(self, materials: Iterable[MaterialDefinition], element_count: int, num_processes: int):
+    def __init__(
+        self,
+        materials: Iterable[MaterialDefinition],
+        element_count: int,
+        num_processes: int,
+        *,
+        j2_backend: str = "python",
+    ):
         if (
             isinstance(num_processes, bool)
             or not isinstance(num_processes, (int, np.integer))
@@ -131,6 +143,11 @@ class ElementExecutor:
             raise ModelError("--num-processes must be a positive integer")
         if element_count < 1:
             raise ModelError("cannot create an element executor for an empty model")
+        if j2_backend not in available_j2_backends():
+            available = ", ".join(available_j2_backends())
+            raise ModelError(
+                f"J2 backend {j2_backend!r} is unavailable; available backends: {available}"
+            )
         self._materials = tuple(materials)
         if not self._materials:
             raise ModelError("cannot create an element executor without material blocks")
@@ -141,6 +158,7 @@ class ElementExecutor:
         self._parallel = effective > 1
         start_method: str | None = None
         worker_blas_threads: int | None = None
+        serializable: tuple[_SerializableMaterial, ...] = ()
         if self._parallel:
             serializable = tuple(
                 _SerializableMaterial(material.name, material.model, dict(material.properties))
@@ -152,17 +170,25 @@ class ElementExecutor:
                 raise ModelError(
                     "process element assembly requires importable material routines and picklable properties"
                 ) from exc
-            context = _process_context()
-            start_method = context.get_start_method()
-            worker_blas_threads = 1
-            self._pool = ProcessPoolExecutor(
-                max_workers=effective,
-                mp_context=context,
-                initializer=_initialize_worker,
-                initargs=(serializable,),
-            )
+        self._previous_j2_backend = active_j2_backend()
+        configure_j2_backend(j2_backend)
+        try:
+            if self._parallel:
+                context = _process_context()
+                start_method = context.get_start_method()
+                worker_blas_threads = 1
+                self._pool = ProcessPoolExecutor(
+                    max_workers=effective,
+                    mp_context=context,
+                    initializer=_initialize_worker,
+                    initargs=(serializable, j2_backend),
+                )
+        except Exception:
+            configure_j2_backend(self._previous_j2_backend)
+            raise
         self.info = ExecutionInfo(
             "process" if self._parallel else "serial",
+            j2_backend,
             requested,
             effective,
             _available_physical_cores(cpu_ids),
@@ -186,7 +212,8 @@ class ElementExecutor:
             f"{self.info.requested_processes} process(es) requested, "
             f"{self.info.effective_processes} effective; "
             f"{physical} physical core(s) and "
-            f"{self.info.available_logical_cpus} logical CPU(s) available"
+            f"{self.info.available_logical_cpus} logical CPU(s) available; "
+            f"J2 backend: {self.info.j2_backend}"
         )
 
     def evaluate(self, items: list[ElementWorkItem]) -> Iterator[ElementResponse]:
@@ -205,6 +232,7 @@ class ElementExecutor:
         if self._pool is not None:
             self._pool.shutdown(wait=True, cancel_futures=True)
             self._pool = None
+        configure_j2_backend(self._previous_j2_backend)
 
     def __enter__(self) -> "ElementExecutor":
         return self

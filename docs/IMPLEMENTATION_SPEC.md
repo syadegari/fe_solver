@@ -308,6 +308,23 @@ Required material tests cover validation and initialization, hydrostatic elastic
 
 The HDF5 result stores both state fields at element centroids. The six-component plastic metric carries the same component-order metadata as reported symmetric stress and strain. Do not store an additional J2/von-Mises stress field; it is derived from the saved Cauchy stress during postprocessing.
 
+An optional J2 JIT feasibility backend may compile the numeric return-map kernel
+with Numba.  It must execute the same array/scalar kernel as the interpreted
+reference path; do not maintain a second constitutive implementation.  Named
+state/property access and conversion of numeric failure codes to the common
+material response remain in the Python API wrapper.  Compile without fast-math
+or parallel transformations.  The interpreted backend remains the default
+during evaluation of the experiment, backend choice is recorded in execution
+metadata, and backend choice does not change restart/model identity.
+
+Before adopting the JIT path, compare interpreted and compiled stress, state,
+and algorithmic tangent on elastic, plastic, and sequential evolved paths.
+Also compare serial and process element responses and an isolated small-prism
+solve, including HDF5 fields and nonlinear/line-search decisions.  Report
+first-call/cache effects separately from warm timings.  A faster isolated
+kernel alone is insufficient: adoption requires a material end-to-end solver
+speedup without a material numerical difference.
+
 ---
 
 ## 7. Gmsh mesh contract

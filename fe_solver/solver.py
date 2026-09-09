@@ -358,6 +358,7 @@ def run_analysis(
     stop_time: float | None = None,
     num_processes: int = 1,
     debug_timing: bool = False,
+    j2_backend: str = "python",
 ) -> AnalysisResult:
     analysis_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
@@ -415,6 +416,7 @@ def run_analysis(
         (block.material for block in model.blocks),
         sum(len(block.connectivity) for block in model.blocks),
         num_processes,
+        j2_backend=j2_backend,
     )
     print(executor.describe())
     result = AnalysisResult(

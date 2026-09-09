@@ -136,6 +136,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--num-processes", type=int, default=1)
     parser.add_argument("--debug-timing", action="store_true")
+    parser.add_argument(
+        "--j2-backend", choices=("python", "numba"), default="python"
+    )
     args = parser.parse_args(argv)
     if args.list_cases:
         print(describe_cases())
@@ -148,6 +151,7 @@ def main(argv: list[str] | None = None) -> None:
             stop_time=args.stop_time,
             num_processes=args.num_processes,
             debug_timing=args.debug_timing,
+            j2_backend=args.j2_backend,
         )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")

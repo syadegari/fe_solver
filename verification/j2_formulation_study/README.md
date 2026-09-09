@@ -29,8 +29,12 @@ Use `--stop-time 0.5` for the initial admissibility gate. A complete square-pris
 ```bash
 /usr/bin/time -v conda run --no-capture-output -n py3.14 \
   python -m verification.run_j2_formulation_study \
-  --case CASE --num-processes 2 --debug-timing
+  --case CASE --num-processes 2 --debug-timing --j2-backend numba
 ```
+
+Omit `--j2-backend numba` to retain the interpreted reference path.  Backend
+choice is written to the execution section of `run_log.json` and does not
+change material or restart identity.
 
 Resume into the same result database by selecting a durable checkpoint:
 

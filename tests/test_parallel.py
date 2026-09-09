@@ -14,6 +14,7 @@ import numpy as np
 from fe_solver.assembly import ElementBlock, assemble_internal
 from fe_solver.config import Deck, load_deck
 from fe_solver.execution import ElementExecutor
+from fe_solver.j2_kernel import available_j2_backends
 from fe_solver.materials import material_definition
 from fe_solver.preprocess import prepare_analysis
 from fe_solver.solver import run_analysis
@@ -59,14 +60,17 @@ def _assert_assemblies_close(
     testcase: unittest.TestCase,
     serial,
     process,
+    *,
+    rtol: float = 2.0e-14,
+    atol: float = 2.0e-14,
 ) -> None:
-    np.testing.assert_allclose(process.f_int, serial.f_int, rtol=2.0e-14, atol=2.0e-14)
+    np.testing.assert_allclose(process.f_int, serial.f_int, rtol=rtol, atol=atol)
     assert serial.K is not None and process.K is not None
     np.testing.assert_allclose(
-        process.K.toarray(), serial.K.toarray(), rtol=2.0e-14, atol=2.0e-14
+        process.K.toarray(), serial.K.toarray(), rtol=rtol, atol=atol
     )
     for process_state, serial_state in zip(process.state_trial, serial.state_trial):
-        np.testing.assert_allclose(process_state, serial_state, rtol=2.0e-14, atol=2.0e-14)
+        np.testing.assert_allclose(process_state, serial_state, rtol=rtol, atol=atol)
     testcase.assertEqual(len(process.gauss_output), len(serial.gauss_output))
     for process_block, serial_block in zip(process.gauss_output, serial.gauss_output):
         testcase.assertEqual(len(process_block), len(serial_block))
@@ -75,8 +79,8 @@ def _assert_assemblies_close(
                 np.testing.assert_allclose(
                     np.asarray(getattr(process_element, output_field.name)),
                     np.asarray(getattr(serial_element, output_field.name)),
-                    rtol=2.0e-14,
-                    atol=2.0e-14,
+                    rtol=rtol,
+                    atol=atol,
                 )
 
 
@@ -164,6 +168,36 @@ class ElementProcessAssemblyTests(unittest.TestCase):
                 element_executor=executor,
             )
         _assert_assemblies_close(self, serial, process)
+
+    def test_numba_j2_assembly_matches_python_in_serial_and_process_modes(self) -> None:
+        if "numba" not in available_j2_backends():
+            self.skipTest("optional Numba backend is unavailable")
+        prepared = prepare_analysis(_j2_deck(load_deck(ROOT / "examples/case_a_hex8_fbar.toml")))
+        model = prepared.model
+        u_n = np.zeros(model.mesh.ndof)
+        u_trial = _homogeneous_displacement(model.mesh.X)
+        materials = tuple(block.material for block in model.blocks)
+        element_count = sum(len(block.connectivity) for block in model.blocks)
+        with ElementExecutor(
+            materials, element_count, 1, j2_backend="python"
+        ) as executor:
+            python = assemble_internal(
+                model, u_n, u_trial, 0.0, 0.1, True, element_executor=executor
+            )
+        with ElementExecutor(
+            materials, element_count, 1, j2_backend="numba"
+        ) as executor:
+            numba_serial = assemble_internal(
+                model, u_n, u_trial, 0.0, 0.1, True, element_executor=executor
+            )
+        with ElementExecutor(
+            materials, element_count, 2, j2_backend="numba"
+        ) as executor:
+            numba_process = assemble_internal(
+                model, u_n, u_trial, 0.0, 0.1, True, element_executor=executor
+            )
+        _assert_assemblies_close(self, python, numba_serial, rtol=1.0e-12, atol=1.0e-10)
+        _assert_assemblies_close(self, python, numba_process, rtol=1.0e-12, atol=1.0e-10)
 
     def test_persistent_process_solver_matches_serial_and_logs_timing(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")

@@ -177,6 +177,31 @@ python -m verification.diagnose_newton_conditioning DECK RESTART RUN_H5 --commit
 
 The first command writes reviewable J2 uniaxial and simple-shear CSV, compressed NumPy, PNG, and JSON results under `verification/material_point_results/`. The conditioning utility deliberately uses a dense null-space/SVD and is restricted to small diagnostics; production assembly and KKT solution remain sparse.
 
+The isolated J2 JIT feasibility experiment uses the optional `j2-jit`
+dependency and leaves the ordinary solver on the interpreted backend.  Run the
+synthetic material benchmark with:
+
+```bash
+python -m verification.run_j2_numba_feasibility material
+```
+
+The runner can also produce separate, directly comparable small-prism results:
+
+```bash
+python -m verification.run_j2_numba_feasibility prism \
+  --backend python --num-processes 2 --stop-time 0.02
+python -m verification.run_j2_numba_feasibility prism \
+  --backend numba --num-processes 2 --stop-time 0.02
+```
+
+Use its `compare-prisms` subcommand for numerical, nonlinear-path, and internal
+wall-time comparison.  JIT outputs are isolated under
+`examples/results/j2_numba_feasibility/` and never overwrite formulation-study
+databases.  Once the equivalence checks have passed, select the compiled kernel
+for an ordinary J2 solve or formulation-study case with `--j2-backend numba`.
+The default remains `python`, so installing the optional dependency alone does
+not silently change a result path.
+
 ## Verify
 
 The test suite uses the standard library runner, so no separate test dependency is required:

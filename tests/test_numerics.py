@@ -6,6 +6,7 @@ import numpy as np
 from scipy import sparse
 
 from fe_solver.elements import evaluate_element, evaluate_fbar_reference_element
+from fe_solver.j2_kernel import available_j2_backends, configure_j2_backend, numba_signatures
 from fe_solver.materials import (
     evaluate_material_point,
     init_j2_plasticity,
@@ -334,6 +335,68 @@ class MaterialTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(after_cutback.P, repeated.P)
         np.testing.assert_array_equal(after_cutback.state_trial.values, repeated.state_trial.values)
+
+    def test_j2_numba_kernel_matches_interpreted_kernel(self) -> None:
+        if "numba" not in available_j2_backends():
+            self.skipTest("optional Numba backend is unavailable")
+        model, state = self.j2_initial_state()
+        deformations = (
+            np.diag([np.exp(0.001), np.exp(-0.0005), np.exp(-0.0005)]),
+            np.array([[1.025, 0.012, 0.0], [0.0, 0.988, 0.004], [0.0, 0.0, 0.989]]),
+        )
+        try:
+            for F in deformations:
+                for need_tangent in (False, True):
+                    request = MaterialRequest(
+                        np.eye(3), F, state, model.properties, None, 0.0, 1.0,
+                        need_tangent,
+                    )
+                    configure_j2_backend("python")
+                    interpreted = update_j2_plasticity(request)
+                    configure_j2_backend("numba")
+                    compiled = update_j2_plasticity(request)
+                    self.assertTrue(interpreted.status.ok, interpreted.status.message)
+                    self.assertEqual(compiled.status, interpreted.status)
+                    np.testing.assert_allclose(
+                        compiled.P, interpreted.P, rtol=3.0e-14, atol=3.0e-11
+                    )
+                    np.testing.assert_allclose(
+                        compiled.state_trial.values,
+                        interpreted.state_trial.values,
+                        rtol=3.0e-14,
+                        atol=3.0e-14,
+                    )
+                    if need_tangent:
+                        assert interpreted.A_alg is not None and compiled.A_alg is not None
+                        np.testing.assert_allclose(
+                            compiled.A_alg, interpreted.A_alg,
+                            rtol=3.0e-14, atol=3.0e-11,
+                        )
+                    else:
+                        self.assertIsNone(compiled.A_alg)
+            invalid_state_values = state.values.copy()
+            invalid_state_values[0] = 2.0
+            invalid_state = model.state_layout.view(invalid_state_values)
+            failure_requests = (
+                MaterialRequest(
+                    np.eye(3), np.diag([-1.0, 1.0, 1.0]), state,
+                    model.properties, None, 0.0, 1.0, False,
+                ),
+                MaterialRequest(
+                    np.eye(3), np.eye(3), invalid_state,
+                    model.properties, None, 0.0, 1.0, False,
+                ),
+            )
+            for request in failure_requests:
+                configure_j2_backend("python")
+                interpreted = update_j2_plasticity(request)
+                configure_j2_backend("numba")
+                compiled = update_j2_plasticity(request)
+                self.assertFalse(interpreted.status.ok)
+                self.assertEqual(compiled.status, interpreted.status)
+            self.assertTrue(numba_signatures())
+        finally:
+            configure_j2_backend("python")
 
     def test_generic_material_point_driver(self) -> None:
         material = neo_hook_definition("elastic", {"mu": 2.0, "kappa": 12.0})

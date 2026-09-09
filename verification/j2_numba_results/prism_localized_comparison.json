@@ -1,0 +1,33 @@
+{
+  "database_comparison": {
+    "reference": "examples/results/j2_numba_feasibility/localized_python/run.h5",
+    "candidate": "examples/results/j2_numba_feasibility/localized_numba/run.h5",
+    "passed": true,
+    "exact_numeric_datasets": 7,
+    "tolerance_numeric_datasets": 7,
+    "worst_absolute": {
+      "path": "results/blocks/0000/cauchy_stress",
+      "exact": false,
+      "max_absolute": 1.0483631740498822e-09,
+      "max_relative": 3.6365635631292373e-09
+    },
+    "worst_relative": {
+      "path": "results/nodal/displacement",
+      "exact": false,
+      "max_absolute": 4.440892098500626e-15,
+      "max_relative": 1.9333820391630145
+    },
+    "structural_errors": [],
+    "normalized_datasets": [
+      "meta/resolved_input_json:output.directory"
+    ],
+    "ignored_attributes": [
+      "/:git_commit"
+    ]
+  },
+  "same_increment_history": true,
+  "same_newton_and_line_search_path": true,
+  "python_elapsed_wall_seconds": 8.081483344,
+  "numba_elapsed_wall_seconds": 5.966285895,
+  "warm_solver_speedup": 1.3545249902913008
+}

@@ -1,0 +1,205 @@
+{
+  "environment": {
+    "python": "3.14.7",
+    "numpy": "2.5.2",
+    "numba": "0.67.0",
+    "platform": "Linux-6.17.0-40-generic-x86_64-with-glibc2.39",
+    "logical_cpus": 4,
+    "blas_threads": 1
+  },
+  "kernel": {
+    "nopython_signatures": [
+      "(Array(float64, 2, 'C', False, aligned=True), Array(float64, 1, 'C', False, aligned=True), float64, float64, float64, float64, float64, float64, bool) -> Tuple(int64, array(float64, 2d, C), array(float64, 1d, C), array(float64, 1d, C))"
+    ],
+    "fastmath": false
+  },
+  "correctness": {
+    "elastic_stress_state": {
+      "P_max_absolute": 0.0,
+      "P_max_relative": 0.0,
+      "state_max_absolute": 0.0,
+      "state_max_relative": 0.0
+    },
+    "elastic_tangent": {
+      "P_max_absolute": 0.0,
+      "P_max_relative": 0.0,
+      "state_max_absolute": 0.0,
+      "state_max_relative": 0.0,
+      "A_max_absolute": 0.0,
+      "A_max_relative": 0.0
+    },
+    "plastic_stress_state": {
+      "P_max_absolute": 0.0,
+      "P_max_relative": 0.0,
+      "state_max_absolute": 6.776263578034403e-21,
+      "state_max_relative": 6.776263578034403e-21
+    },
+    "plastic_tangent": {
+      "P_max_absolute": 0.0,
+      "P_max_relative": 0.0,
+      "state_max_absolute": 6.776263578034403e-21,
+      "state_max_relative": 6.776263578034403e-21,
+      "A_max_absolute": 2.9103830456733704e-11,
+      "A_max_relative": 5.287684563919246e-15
+    }
+  },
+  "sequential_uniaxial_path_correctness": {
+    "steps": 400,
+    "P_max_absolute": 1.1368683772161603e-13,
+    "P_max_relative": 2.7851233197625995e-16,
+    "state_max_absolute": 5.551115123125783e-17,
+    "state_max_relative": 5.551115123125783e-17,
+    "A_max_absolute": 2.9103830456733704e-11,
+    "A_max_relative": 2.3983999193364986e-16
+  },
+  "timing": {
+    "elastic_stress_state": {
+      "python": {
+        "calls_per_repeat": 2000,
+        "repeats": 7,
+        "first_call_seconds": 0.000293646,
+        "seconds_per_call": [
+          0.0001853528975,
+          0.00018869088000000002,
+          0.0001865611125,
+          0.00019108879200000002,
+          0.000183359761,
+          0.000187163567,
+          0.000194990301
+        ],
+        "median_seconds_per_call": 0.000187163567,
+        "minimum_seconds_per_call": 0.000183359761,
+        "checksum": 2244304.809045966
+      },
+      "numba": {
+        "calls_per_repeat": 2000,
+        "repeats": 7,
+        "first_call_seconds": 9.4739e-05,
+        "seconds_per_call": [
+          4.6558865e-05,
+          4.6713817000000006e-05,
+          5.11792415e-05,
+          4.7184972000000007e-05,
+          5.2727037000000006e-05,
+          5.24598e-05,
+          4.83115705e-05
+        ],
+        "median_seconds_per_call": 4.83115705e-05,
+        "minimum_seconds_per_call": 4.6558865e-05,
+        "checksum": 2244304.809045966
+      },
+      "warm_speedup": 3.874094033022586
+    },
+    "elastic_tangent": {
+      "python": {
+        "calls_per_repeat": 500,
+        "repeats": 7,
+        "first_call_seconds": 0.001077831,
+        "seconds_per_call": [
+          0.000829105278,
+          0.0008177893180000001,
+          0.0008068791020000001,
+          0.00078273523,
+          0.000848700404,
+          0.0008379678500000001,
+          0.0008492210280000002
+        ],
+        "median_seconds_per_call": 0.000829105278,
+        "minimum_seconds_per_call": 0.00078273523,
+        "checksum": 561076.2022614826
+      },
+      "numba": {
+        "calls_per_repeat": 500,
+        "repeats": 7,
+        "first_call_seconds": 0.000187187,
+        "seconds_per_call": [
+          0.000119109844,
+          0.00012527570400000003,
+          0.000125138512,
+          0.000103807058,
+          0.00012349545000000001,
+          0.000127997054,
+          0.00012513586800000002
+        ],
+        "median_seconds_per_call": 0.00012513586800000002,
+        "minimum_seconds_per_call": 0.000103807058,
+        "checksum": 561076.2022614826
+      },
+      "warm_speedup": 6.625640523786513
+    },
+    "plastic_stress_state": {
+      "python": {
+        "calls_per_repeat": 2000,
+        "repeats": 7,
+        "first_call_seconds": 0.00042602400000000005,
+        "seconds_per_call": [
+          0.0003998504715,
+          0.0004151171035,
+          0.00040111154200000006,
+          0.00039009426600000003,
+          0.00041522567700000003,
+          0.0004024916625,
+          0.00040482427000000003
+        ],
+        "median_seconds_per_call": 0.0004024916625,
+        "minimum_seconds_per_call": 0.00039009426600000003,
+        "checksum": 8202556.601773311
+      },
+      "numba": {
+        "calls_per_repeat": 2000,
+        "repeats": 7,
+        "first_call_seconds": 0.000101588,
+        "seconds_per_call": [
+          5.5123192e-05,
+          5.4984006000000004e-05,
+          6.16571445e-05,
+          5.4216752500000006e-05,
+          5.3526263e-05,
+          5.6400007e-05,
+          6.045752400000001e-05
+        ],
+        "median_seconds_per_call": 5.5123192e-05,
+        "minimum_seconds_per_call": 5.3526263e-05,
+        "checksum": 8202556.601773311
+      },
+      "warm_speedup": 7.3016755361336845
+    },
+    "plastic_tangent": {
+      "python": {
+        "calls_per_repeat": 500,
+        "repeats": 7,
+        "first_call_seconds": 0.0017258570000000001,
+        "seconds_per_call": [
+          0.001190973234,
+          0.001228920324,
+          0.001206295708,
+          0.001284143936,
+          0.0014649022220000001,
+          0.001651011296,
+          0.0011252078680000002
+        ],
+        "median_seconds_per_call": 0.001228920324,
+        "minimum_seconds_per_call": 0.0011252078680000002,
+        "checksum": 2050639.1504428696
+      },
+      "numba": {
+        "calls_per_repeat": 500,
+        "repeats": 7,
+        "first_call_seconds": 0.000143604,
+        "seconds_per_call": [
+          0.000110809398,
+          0.00013346034,
+          0.00011775821000000001,
+          0.00011127808,
+          0.00011321889000000001,
+          0.00010033304,
+          0.000118098696
+        ],
+        "median_seconds_per_call": 0.00011321889000000001,
+        "minimum_seconds_per_call": 0.00010033304,
+        "checksum": 2050639.1504428696
+      },
+      "warm_speedup": 10.854375307866029
+    }
+  }
+}

@@ -9,6 +9,9 @@ description = "Finite-strain Hex8, Hex8-Fbar, and Hex20 finite-element prototype
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.26", "scipy>=1.11", "gmsh>=4.11", "h5py>=3.11", "threadpoolctl>=3.6"]
 
+[project.optional-dependencies]
+j2-jit = ["numba>=0.67,<0.68"]
+
 [project.scripts]
 fe-solver = "fe_solver.cli:main"
 
