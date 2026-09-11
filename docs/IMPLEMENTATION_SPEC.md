@@ -1223,6 +1223,7 @@ The required schema is logically:
 
 ```text
 /meta/resolved_input_json
+/meta/input_segments_json                      [n_input_segment]
 /mesh/reference_coordinates                   [n_node, 3]
 /mesh/node_tags                               [n_node]
 /mesh/blocks/<block>/connectivity             [n_elem, n_node_per_elem]
@@ -1244,6 +1245,13 @@ cell. Store curves so reported fields can be correlated with prescribed historie
 `-C.T @ lambda` (the structure-on-constraint sign) because they support equilibrium audits, boundary resultants, and
 later RVE homogenization. Newton residuals,
 tolerances, cutback attempts, and verification summaries belong in the standalone JSON run log, not the field database.
+
+`resolved_input_json` and the root `git_commit` describe the cold-start input and revision. The variable-length
+`input_segments_json` array records the revision, resolved input, and accepted-state start time governing each
+subsequently computed segment. A cold run has one segment at `t_start`. Before an in-place restart recomputes a tail,
+discard segment records beginning at or after the restart time and append the current input/revision at that boundary.
+This makes a deliberate controller or implementation change across a restart visible without rewriting the provenance
+of the retained prefix.
 
 The JSON log also records execution and performance telemetry. Its top-level `execution` object contains the element
 backend, requested/effective process counts, available physical/logical CPU counts, process start method, and worker

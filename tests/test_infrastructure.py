@@ -24,7 +24,10 @@ from fe_solver.shape import hex20_shape, hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import ModelError, RecoverableError
 from verification.check_j2_prism import compare_prism_histories, extract_prism_history
-from verification.run_j2_formulation_batch import latest_restart
+from verification.run_j2_formulation_batch import (
+    _parse_growth_thresholds,
+    latest_restart,
+)
 from verification.run_j2_formulation_study import build_case_deck
 
 
@@ -198,6 +201,23 @@ class MeshConstraintTests(unittest.TestCase):
                 latest_restart(output, at_most=0.5),
                 restart_directory / "restart_000003.h5",
             )
+
+        baseline = build_case_deck("refined_hex8_fbar")
+        adjusted = build_case_deck(
+            "refined_hex8_fbar", grow_if_newton_iterations_le=6
+        )
+        self.assertEqual(
+            baseline.data["time"]["grow_if_newton_iterations_le"], 5
+        )
+        self.assertEqual(
+            adjusted.data["time"]["grow_if_newton_iterations_le"], 6
+        )
+        self.assertEqual(
+            _parse_growth_thresholds(["refined_hex8_fbar=6"]),
+            {"refined_hex8_fbar": 6},
+        )
+        with self.assertRaisesRegex(ValueError, "expected CASE=COUNT"):
+            _parse_growth_thresholds(["refined_hex8_fbar"])
 
     def test_affine_boundary_and_exact_macro_paths(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")
@@ -406,6 +426,9 @@ class TimeRestartTests(unittest.TestCase):
 
             resumed_data = copy.deepcopy(data)
             resumed_data["restart"]["restart_from"] = str(restart)
+            resumed_data["time"]["grow_if_newton_iterations_le"] = (
+                int(data["time"]["grow_if_newton_iterations_le"]) + 1
+            )
             resumed = run_analysis(
                 Deck(original.path, resumed_data, original.curves), stop_time=0.1
             )
@@ -414,6 +437,24 @@ class TimeRestartTests(unittest.TestCase):
             with h5py.File(database, "r") as archive:
                 np.testing.assert_array_equal(archive["results/time"], [0.0, 0.05, 0.1])
                 self.assertEqual(int(archive["results"].attrs["n_complete_steps"]), 3)
+                segments = []
+                for value in archive["meta/input_segments_json"][:]:
+                    if isinstance(value, bytes):
+                        value = value.decode("utf-8")
+                    segments.append(json.loads(value))
+                self.assertEqual([item["start_time"] for item in segments], [0.0, 0.05])
+                self.assertEqual(
+                    segments[0]["resolved_input"]["time"][
+                        "grow_if_newton_iterations_le"
+                    ],
+                    data["time"]["grow_if_newton_iterations_le"],
+                )
+                self.assertEqual(
+                    segments[1]["resolved_input"]["time"][
+                        "grow_if_newton_iterations_le"
+                    ],
+                    resumed_data["time"]["grow_if_newton_iterations_le"],
+                )
 
         self.assertEqual(len(resumed.increments), 2)
         self.assertEqual(len(resumed_log["increments"]), 2)

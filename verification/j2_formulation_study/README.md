@@ -43,6 +43,13 @@ libraries to one thread per worker, retains full solver and `/usr/bin/time`
 logs, and writes a provenance manifest.  `--num-processes` remains an explicit
 user choice.
 
+For an explicitly diagnosed case whose accepted increments consistently need
+slightly more Newton iterations than the base deck permits for step growth,
+the batch accepts a repeatable, case-local override such as
+`--growth-threshold refined_hex8_fbar=6`. The resolved override is recorded in
+the command, batch invocation provenance, and HDF5 input segment beginning at
+the selected restart. It does not alter other study cases.
+
 Generate all direct-HDF5 comparisons and plots with:
 
 ```bash

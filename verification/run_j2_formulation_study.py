@@ -98,6 +98,7 @@ def build_case_deck(
     *,
     restart_from: str = "",
     output_directory: str | Path | None = None,
+    grow_if_newton_iterations_le: int | None = None,
 ) -> Deck:
     try:
         case = CASES[case_name]
@@ -115,6 +116,12 @@ def build_case_deck(
         if output_directory is not None
         else case.output_directory
     )
+    if grow_if_newton_iterations_le is not None:
+        if grow_if_newton_iterations_le < 0:
+            raise ValueError("Newton-iteration growth threshold must be nonnegative")
+        data["time"]["grow_if_newton_iterations_le"] = (
+            grow_if_newton_iterations_le
+        )
     data["restart"]["restart_from"] = restart_from
     return Deck(base.path, data, base.curves)
 
@@ -152,18 +159,30 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--j2-backend", choices=("python", "numba"), default="python"
     )
+    parser.add_argument(
+        "--grow-if-newton-iterations-le",
+        type=int,
+        default=None,
+        help="override the deck's accepted-step growth threshold for this run",
+    )
     args = parser.parse_args(argv)
     if args.list_cases:
         print(describe_cases())
         return
     if args.case is None:
         parser.error("--case is required unless --list-cases is used")
+    if (
+        args.grow_if_newton_iterations_le is not None
+        and args.grow_if_newton_iterations_le < 0
+    ):
+        parser.error("--grow-if-newton-iterations-le must be nonnegative")
     try:
         result = run_analysis(
             build_case_deck(
                 args.case,
                 restart_from=args.restart_from,
                 output_directory=args.output_directory,
+                grow_if_newton_iterations_le=args.grow_if_newton_iterations_le,
             ),
             stop_time=args.stop_time,
             num_processes=args.num_processes,

@@ -8,6 +8,18 @@ serial/process, restart, and full-solver comparisons found only roundoff-level
 differences, so the outstanding production runs use the explicit `numba`
 backend.  The pre-Numba databases remain valid study evidence.
 
+Continuation note (2026-09-11): the remote completion batch finished
+`soft_bulk_hex8_fbar`, `soft_bulk_hex8`, and `coarse_hex20` through `t=1`.
+The `refined_hex8_fbar` case then settled at `dt=7.8125e-5`, with many
+successive, first-attempt convergences taking exactly six Newton iterations.
+Because the base growth threshold was five, the controller could not recover
+from the earlier cutbacks. The run was stopped cleanly at `t=0.857578125` and
+will recompute the tail from its latest retained material-state restart at
+`t=0.8`, using the case-local completion override
+`--growth-threshold refined_hex8_fbar=6`. The other cases retain the base
+threshold of five. This is the smallest relaxation supported by the observed
+history; a larger threshold has not been adopted.
+
 The formulation-study implementation is on branch
 `investigation/j2-formulation-study`.  The original code checkpoint preceding
 this status file is commit `a14b735` (`Add J2 element formulation study

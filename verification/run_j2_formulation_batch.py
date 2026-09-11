@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import shlex
+import signal
 import subprocess
 import sys
 from time import time
@@ -141,6 +142,7 @@ def _solver_command(
     num_processes: int,
     backend: str,
     resource_log: Path,
+    growth_threshold: int | None = None,
 ) -> list[str]:
     command = [
         "/usr/bin/time", "-v", "-o", str(resource_log),
@@ -155,6 +157,8 @@ def _solver_command(
         command.extend(("--stop-time", str(target_time)))
     if restart_from is not None:
         command.extend(("--restart-from", str(restart_from)))
+    if growth_threshold is not None:
+        command.extend(("--grow-if-newton-iterations-le", str(growth_threshold)))
     return command
 
 
@@ -170,6 +174,7 @@ def _run_and_tee(command: list[str], log_path: Path, environment: dict[str, str]
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         assert process.stdout is not None
         try:
@@ -179,8 +184,54 @@ def _run_and_tee(command: list[str], log_path: Path, environment: dict[str, str]
                 stream.flush()
             return process.wait()
         except KeyboardInterrupt:
-            process.wait()
+            # The solver may own a fork-server and element workers.  Signal the
+            # complete session so no descendants keep the tee pipe open.
+            try:
+                os.killpg(process.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=30.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=10.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
             raise
+
+
+def _parse_growth_thresholds(values: list[str]) -> dict[str, int]:
+    thresholds: dict[str, int] = {}
+    for value in values:
+        case_name, separator, count_text = value.partition("=")
+        if not separator or not case_name or not count_text:
+            raise ValueError(
+                f"invalid growth threshold {value!r}; expected CASE=COUNT"
+            )
+        if case_name not in OUTSTANDING_CASES:
+            raise ValueError(f"unknown growth-threshold case {case_name!r}")
+        if case_name in thresholds:
+            raise ValueError(f"duplicate growth threshold for {case_name!r}")
+        try:
+            count = int(count_text)
+        except ValueError as exc:
+            raise ValueError(
+                f"growth threshold for {case_name!r} must be an integer"
+            ) from exc
+        if count < 0:
+            raise ValueError(
+                f"growth threshold for {case_name!r} must be nonnegative"
+            )
+        thresholds[case_name] = count
+    return thresholds
 
 
 def _existing_or_seed_restart(
@@ -216,6 +267,7 @@ def _load_or_create_manifest(
     phase: str,
     num_processes: int,
     backend: str,
+    growth_thresholds: dict[str, int],
     argv: list[str],
 ) -> dict[str, Any]:
     if path.is_file():
@@ -236,6 +288,9 @@ def _load_or_create_manifest(
             "phase": phase,
             "num_processes": num_processes,
             "j2_backend": backend,
+            "growth_thresholds": growth_thresholds,
+            "repository": _repository_provenance(),
+            "environment": _environment_provenance(),
             "argv": argv,
         }
     )
@@ -252,9 +307,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--circular-restart", type=Path, default=None)
     parser.add_argument("--cold-circular", action="store_true")
+    parser.add_argument(
+        "--growth-threshold",
+        action="append",
+        default=[],
+        metavar="CASE=COUNT",
+        help="case-specific override of grow_if_newton_iterations_le; repeatable",
+    )
     args = parser.parse_args(argv)
     if args.num_processes < 1:
         parser.error("--num-processes must be positive")
+    try:
+        growth_thresholds = _parse_growth_thresholds(args.growth_threshold)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     run_root = args.run_root.resolve()
     manifest_path = run_root / "manifest.json"
@@ -274,6 +340,7 @@ def main(argv: list[str] | None = None) -> None:
         phase=args.phase,
         num_processes=args.num_processes,
         backend=args.j2_backend,
+        growth_thresholds=growth_thresholds,
         argv=sys.argv if argv is None else [sys.argv[0], *argv],
     )
     _write_manifest(manifest_path, manifest)
@@ -318,6 +385,7 @@ def main(argv: list[str] | None = None) -> None:
             num_processes=args.num_processes,
             backend=args.j2_backend,
             resource_log=resource_log,
+            growth_threshold=growth_thresholds.get(case_name),
         )
         case_record = manifest["cases"].setdefault(case_name, {"attempts": []})
         attempt = {

@@ -11,7 +11,13 @@ import numpy as np
 
 
 IGNORED_ATTRIBUTES = {("/", "git_commit")}
-NORMALIZED_DATASETS = {"meta/resolved_input_json": ("output", "directory")}
+NORMALIZED_DATASETS = {
+    "meta/resolved_input_json": (("output", "directory"),),
+    "meta/input_segments_json": (
+        ("git_commit",),
+        ("resolved_input", "output", "directory"),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -33,7 +39,8 @@ class ComparisonResult:
     worst_relative: NumericDifference | None
     structural_errors: tuple[str, ...]
     normalized_datasets: tuple[str, ...] = tuple(
-        f"{path}:{'.'.join(keys)}" for path, keys in sorted(NORMALIZED_DATASETS.items())
+        f"{path}:{','.join('.'.join(keys) for keys in key_paths)}"
+        for path, key_paths in sorted(NORMALIZED_DATASETS.items())
     )
     ignored_attributes: tuple[str, ...] = tuple(
         f"{path}:{name}" for path, name in sorted(IGNORED_ATTRIBUTES)
@@ -104,15 +111,23 @@ def _numeric_difference(
     )
 
 
-def _normalized_json(dataset: h5py.Dataset, keys: tuple[str, ...]) -> Any:
-    value = dataset[()]
-    if isinstance(value, bytes):
-        value = value.decode("utf-8")
-    parsed = json.loads(str(value))
-    parent = parsed
-    for key in keys[:-1]:
-        parent = parent[key]
-    parent.pop(keys[-1], None)
+def _normalized_json(
+    dataset: h5py.Dataset, key_paths: tuple[tuple[str, ...], ...]
+) -> Any:
+    raw = dataset[()]
+    values = raw.tolist() if isinstance(raw, np.ndarray) else [raw]
+    parsed_values = []
+    for value in values:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        parsed = json.loads(str(value))
+        for keys in key_paths:
+            parent = parsed
+            for key in keys[:-1]:
+                parent = parent[key]
+            parent.pop(keys[-1], None)
+        parsed_values.append(parsed)
+    parsed = parsed_values if isinstance(raw, np.ndarray) else parsed_values[0]
     return parsed
 
 

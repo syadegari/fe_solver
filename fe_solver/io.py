@@ -142,6 +142,15 @@ class HDF5ResultWriter:
         meta = root.create_group("meta")
         meta.attrs["analysis_name"] = str(self.model.deck.data["analysis"]["name"])
         meta.create_dataset("resolved_input_json", data=_json(self.model.deck.data), dtype=h5py.string_dtype())
+        initial_segment = self._input_segment(
+            float(self.model.deck.data["analysis"]["t_start"])
+        )
+        meta.create_dataset(
+            "input_segments_json",
+            data=np.asarray([_json(initial_segment)], dtype=object),
+            maxshape=(None,),
+            dtype=h5py.string_dtype(),
+        )
 
         mesh = root.create_group("mesh")
         mesh.create_dataset("reference_coordinates", data=self.model.mesh.X)
@@ -258,14 +267,58 @@ class HDF5ResultWriter:
                 "restart time must identify exactly one committed results-database row"
             )
         keep = int(matches[0]) + 1
-        if keep == complete:
-            return
-        # Lower the durable prefix first. If interruption occurs during resizing,
-        # normal resume validation can safely trim the remaining longer datasets.
-        self.file["results"].attrs.modify("n_complete_steps", keep)
-        self.file.flush()
-        for dataset in self._time_datasets():
-            dataset.resize(keep, axis=0)
+        if keep != complete:
+            # Lower the durable prefix first. If interruption occurs during resizing,
+            # normal resume validation can safely trim the remaining longer datasets.
+            self.file["results"].attrs.modify("n_complete_steps", keep)
+            self.file.flush()
+            for dataset in self._time_datasets():
+                dataset.resize(keep, axis=0)
+            self.file.flush()
+        self._record_input_segment(resume_time)
+
+    def _input_segment(self, start_time: float) -> dict[str, Any]:
+        return {
+            "start_time": float(start_time),
+            "git_commit": _git_commit(self.model.deck.path.parent),
+            "resolved_input": self.model.deck.data,
+        }
+
+    @staticmethod
+    def _decode_json_string(value: Any) -> Any:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8")
+        return json.loads(str(value))
+
+    def _record_input_segment(self, resume_time: float) -> None:
+        """Record the input/revision governing increments after a restart time."""
+        meta = self.file["meta"]
+        dataset = meta.get("input_segments_json")
+        if dataset is None:
+            original_input = self._decode_json_string(meta["resolved_input_json"][()])
+            original = {
+                "start_time": float(original_input["analysis"]["t_start"]),
+                "git_commit": str(self.file.attrs.get("git_commit", "unknown")),
+                "resolved_input": original_input,
+            }
+            dataset = meta.create_dataset(
+                "input_segments_json",
+                data=np.asarray([_json(original)], dtype=object),
+                maxshape=(None,),
+                dtype=h5py.string_dtype(),
+            )
+
+        tolerance = 1.0e-12 * max(1.0, abs(float(resume_time)))
+        existing = [self._decode_json_string(value) for value in dataset[:]]
+        retained = [
+            segment
+            for segment in existing
+            if float(segment["start_time"]) < resume_time - tolerance
+        ]
+        current = self._input_segment(resume_time)
+        retained.append(current)
+        dataset.resize(len(retained), axis=0)
+        dataset[:] = [_json(segment) for segment in retained]
         self.file.flush()
 
     @property
