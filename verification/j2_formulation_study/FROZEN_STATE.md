@@ -1,4 +1,10 @@
-# Frozen J2 formulation-study state
+# Closed J2 formulation-study state
+
+The study was closed on 2026-09-12. All production cases reached `t=1`, the
+direct-HDF5 comparison report was generated, and the final test suite passed
+45 tests. The generated databases, logs, and plots remain ignored artifacts;
+the case definitions, extraction tools, provenance rules, and reproduction
+commands in this directory are the tracked study record.
 
 Frozen on 2026-09-08 before the J2 Numba feasibility investigation.
 
@@ -42,7 +48,8 @@ matrix`).
 - Restarting into an existing result database transactionally truncates the
   database and JSON history to the selected committed checkpoint before
   recomputing the tail.
-- All 42 unit/integration tests passed at the freeze point.
+- All 42 unit/integration tests passed at the original freeze point; all 45
+  tests passed after the completed-run and reference-data work.
 - One-increment, two-process smoke solves reached `t=0.02` for
   `soft_bulk_hex8_fbar`, `soft_bulk_hex8`, `coarse_hex20`,
   `refined_hex8_fbar`, and `refined_hex8`.
@@ -70,7 +77,7 @@ respectively, to element evaluation across ordinary and line-search
 assemblies.  The F-bar run recorded 2257 line-search trials; the standard
 Hex8 run recorded 1352.
 
-## Existing result state
+## Historical result state at the original freeze
 
 Result databases are generated artifacts and are not the authoritative study
 definition.  Their state at the freeze point is:
@@ -102,22 +109,21 @@ ebceb7e6d4fa34540398fe0797c99b1d554204bc3f8f1c16c954aff9c652ae8e  examples/resul
 Resuming the circular baseline from its `t=0.4` restart will intentionally
 discard and recompute the current `0.4 < t <= 0.4440625` database and log tail.
 
-## Outstanding simulation sequence
+## Completed simulation sequence
 
-Use the `t=0.5` gate before committing substantial resources to any complete
-run.  The preferred order is:
+The production study used the `t=0.5` gate before committing substantial
+resources to the complete runs. The sequence was:
 
-1. Run `soft_bulk_hex8_fbar` and `soft_bulk_hex8` through `t=0.5`, inspect
-   convergence, and then continue both to `t=1`.
-2. Run `coarse_hex20` through `t=0.5`, inspect convergence, and then continue
-   it to `t=1`.
-3. Run the paired `refined_hex8_fbar` and `refined_hex8` cases through
-   `t=0.5`, inspect them, and then continue both to `t=1`.
-4. Resume `circular_hex8_fbar` from its durable `t=0.4` restart, first to
-   `t=0.5` and then to `t=1`.
-5. Run `refined_circular_hex8_fbar` first through `t=0.5` and then to `t=1`.
+1. `soft_bulk_hex8_fbar`, `soft_bulk_hex8`, and `coarse_hex20` passed the gate
+   and were completed by the remote batch.
+2. `refined_hex8_fbar`, `refined_hex8`, `circular_hex8_fbar`, and
+   `refined_circular_hex8_fbar` passed the gate and were completed manually
+   after the batch workflow became less convenient than direct launches.
+3. The seven supplemental production databases were transferred back and
+   checksum-verified. Together with the two original coarse-prism databases,
+   they complete the nine-case matrix.
 
-The preferred resumable batch command for the complete gate is:
+The resumable batch command retained for reproduction is:
 
 ```bash
 conda run --no-capture-output -n py3.14 \
@@ -133,7 +139,8 @@ partial circular database.  Re-run an interrupted phase with `--resume` and
 the same arguments; it selects the latest retained per-case restart and skips
 cases that already reached the phase endpoint.
 
-After inspecting the `t=0.5` gate report, continue the same run root with:
+After inspecting the `t=0.5` gate report, a reproduction can continue the same
+run root with:
 
 ```bash
 conda run --no-capture-output -n py3.14 \
@@ -148,21 +155,18 @@ an on-disk provenance manifest after every state change.  The exact Python
 package versions used for the Linux x86_64 worker are pinned in
 `requirements-j2-study-linux-x86_64.lock`.
 
-## Outstanding comparisons and diagnostic extraction
+## Completed comparisons and diagnostic extraction
 
-After the simulations complete, perform these comparisons from HDF5 rather
-than from interpolated visualization fields:
+The final `report_t1` bundle was generated directly from HDF5 and contains
+these comparisons:
 
-1. Compare the half-bulk Hex8/Hex8-Fbar gap with the completed reference-bulk
-   coarse gap.  This is the material/compressibility diagnostic.
-2. Compare coarse with refined response separately for Hex8 and Hex8-Fbar,
-   and then compare how the formulation gap changes with refinement.  This is
-   the locking/mesh-dependence diagnostic.
-3. Compare Hex20 against both complete coarse Hex8 histories.  Hex20 is a
-   higher-order control, not an assumed reference solution.
-4. Compare coarse and refined circular histories and establish convergence of
-   the monitored final radial displacement before applying a tolerance to the
-   published `-3.740 mm` value.
+1. Half-bulk and reference-bulk Hex8/Hex8-Fbar formulation gaps.
+2. Coarse/refined response for Hex8 and Hex8-Fbar, including the change in the
+   formulation gap with refinement.
+3. Hex20 against both complete coarse Hex8 histories as a higher-order
+   control, not an assumed exact solution.
+4. Coarse/refined circular response, including monitored radial displacement
+   and the published numerical-reference curves.
 
 For each square-prism comparison, report force--elongation, peak force and its
 location, middle width, maximum and axial localization of equivalent plastic
@@ -174,7 +178,7 @@ plastic localization, nonlinear work, and timing quantities.
 ParaView views may be made afterward with identical accepted time, warp,
 camera, and color scale.  They are supporting visual evidence only.
 
-Generate the direct-HDF5 gate or final report and plots with:
+Regenerate the direct-HDF5 gate or final report and plots with:
 
 ```bash
 conda run --no-capture-output -n py3.14 \
@@ -186,8 +190,69 @@ conda run --no-capture-output -n py3.14 \
 Use `--expected-time 1.0` after the completion phase.  The summarizer rejects
 missing or endpoint-inconsistent result databases.
 
-## Resumption rule
+## Localization observation and limitation
 
-The Numba equivalence prerequisite has been satisfied.  All new production
-outputs must still use the isolated batch run root so none of the frozen
-databases above are overwritten.
+The circular-bar solution correctly places the largest plastic deformation in
+the first axial element layer next to the center symmetry plane, where the
+geometric imperfection makes the radius smallest. This location is expected
+for the necking instability and agrees qualitatively with the published
+deformed meshes and contours.
+
+The *width* and peak value of that localization must not, however, be treated
+as mesh-objective predictions. At the final state, the coarse mesh (24 axial
+layers) has maximum equivalent plastic strain `1.5152` in its first layer,
+while the refined mesh (48 layers) has `1.8354` in its first, half-thickness
+layer. The corresponding first-layer means are `1.4885` and `1.7806`. Thus the
+refined first-to-second-layer mean-strain ratio grows from `1.037` at `t=0.7`
+to `1.429` at `t=1`, confirming that the visible one-layer concentration
+develops primarily in the final third. The global force/displacement and
+neck-displacement agreement can therefore be good while a local plastic-strain
+measure remains mesh-sensitive. Elguedj and Hughes make the same distinction
+between global curves and local stress/strain fields and, when extending this
+benchmark to 9 mm, explicitly describe deformation as too localized in the
+first layer for an accurate solution:
+
+<https://www.ices.utexas.edu/media/reports/2011/1135.pdf>
+
+This is not evidence of an implementation bug. It is also not, by itself, a
+proof of loss of ellipticity or pathological mesh dependence: the benchmark
+has geometric necking and positive material hardening. It is evidence that the
+present local Cauchy-continuum J2 model supplies no independent material length
+with which to make the late-stage localization width objective. Convergence of
+global response therefore does not establish convergence of peak plastic
+strain, localization width, or element distortion.
+
+For a possible distant extension with the smallest conceptual departure from
+the current displacement/J2 framework, the preferred option is a scalar
+implicit-gradient enhancement of an accumulated-plastic-strain or hardening
+variable. It introduces a material length through a Helmholtz-type equation
+and can use ordinary `C0` interpolation, but it still requires one additional
+global scalar field, boundary conditions, coupled residual/tangent blocks, and
+cross-element communication. It is substantially less disruptive than a
+Cosserat continuum while being a genuine spatial regularization. Relevant
+starting points are:
+
+- Ramaswamy and Aravas, gradient plasticity with a von Mises example:
+  <https://doi.org/10.1016/S0045-7825(98)00028-0>
+- Engelen et al., implicit gradient-enhanced elastoplasticity:
+  <https://doi.org/10.1016/S0749-6419(01)00042-0>
+
+An integral nonlocal average of the same scalar variable is the next closest
+alternative. It avoids an extra nodal field but requires neighborhood search,
+parallel data exchange, boundary corrections, and a nonlocal consistent
+tangent. A purely local viscoplastic term would be easier to add and may smooth
+the computation, but it introduces loading-rate dependence and is not a
+reliable guarantee of spatial mesh objectivity. F-bar, higher-order elements,
+adaptive remeshing, and arc-length control address locking, approximation and
+distortion, or equilibrium-path tracing; none by itself supplies the missing
+localization length. Crack-band scaling becomes a low-cost option only if a
+calibrated damage or strain-softening energy law is introduced later.
+
+These observations close the present study; none of the regularization options
+is part of the current implementation scope.
+
+## Historical resumption rule
+
+The Numba equivalence prerequisite was satisfied before the production runs.
+Any future reproduction should use an isolated batch run root so historical
+databases are not overwritten.

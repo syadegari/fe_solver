@@ -1,5 +1,11 @@
 # J2 element-formulation study protocol
 
+Status: closed on 2026-09-12 after all nine cases and final direct-HDF5
+comparisons were completed. `FROZEN_STATE.md` records the completion,
+provenance caveats, observed late-stage localization, and possible future
+regularization directions. The commands below are retained for reproduction;
+they are not an outstanding-work list.
+
 The implementation and outstanding-run state was frozen before the J2 JIT
 feasibility investigation, then resumed after the verified Numba acceleration
 was merged.  See `FROZEN_STATE.md` for completed result fingerprints,
