@@ -24,6 +24,10 @@ from fe_solver.shape import hex20_shape, hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import ModelError, RecoverableError
 from verification.check_j2_prism import compare_prism_histories, extract_prism_history
+from verification.check_j2_necking import (
+    REFERENCE_INITIAL_MIDDLE_RADIUS,
+    load_reference_curves,
+)
 from verification.run_j2_formulation_batch import (
     _parse_growth_thresholds,
     latest_restart,
@@ -218,6 +222,17 @@ class MeshConstraintTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "expected CASE=COUNT"):
             _parse_growth_thresholds(["refined_hex8_fbar"])
+
+        reference = load_reference_curves()
+        self.assertEqual(reference["kind"], "published numerical benchmark values")
+        np.testing.assert_array_equal(
+            reference["simo_hughes"]["end_elongation_mm"],
+            [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        )
+        self.assertAlmostEqual(
+            reference["simo_hughes"]["radial_displacement_mm"][-1],
+            3.7 - REFERENCE_INITIAL_MIDDLE_RADIUS,
+        )
 
     def test_affine_boundary_and_exact_macro_paths(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")

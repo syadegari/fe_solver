@@ -17,6 +17,12 @@ This study separates four numerical axes while keeping every unlisted input fixe
 
 For every comparison, report force--elongation, peak force and its location, middle width/radius, maximum and axial localization of equivalent plastic strain, raw and material-seen `J`, hydrostatic-stress variation, accepted increments, Newton iterations, line-search work, and cutbacks.
 
+The circular comparison overlays middle-surface radial displacement versus
+imposed elongation with the numerical literature points documented in
+`REFERENCE_DATA.md`. The square-prism comparisons likewise plot middle
+half-width versus imposed elongation. Reference curves are kinematic evidence,
+not substitutes for the stress-distribution and mesh-sensitivity diagnostics.
+
 ## Commands
 
 List the exact case matrix:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,58 @@ from verification.check_j2_prism import _coordinate_groups, _load_solver_summary
 
 
 REFERENCE_RADIAL_DISPLACEMENT = -3.740
+REFERENCE_INITIAL_MIDDLE_RADIUS = 0.982 * 6.413
+REFERENCE_CURVE_PATH = (
+    Path(__file__).resolve().parent
+    / "j2_formulation_study/circular_necking_reference.csv"
+)
+
+
+def load_reference_curves() -> dict[str, Any]:
+    """Load published numerical neck-radius points and convert to displacement."""
+    with REFERENCE_CURVE_PATH.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    elongation = [float(row["end_elongation_mm"]) for row in rows]
+
+    def series(column: str) -> dict[str, list[float]]:
+        radius = [float(row[column]) for row in rows]
+        return {
+            "end_elongation_mm": elongation,
+            "middle_radius_mm": radius,
+            "radial_displacement_mm": [
+                value - REFERENCE_INITIAL_MIDDLE_RADIUS for value in radius
+            ],
+        }
+
+    return {
+        "kind": "published numerical benchmark values",
+        "tabulation_source": (
+            "https://doc.comsol.com/6.4/doc/com.comsol.help.models.nsm.bar_necking/"
+            "bar_necking.html"
+        ),
+        "attributed_sources": {
+            "simo_hughes": "J.C. Simo and T.J.R. Hughes, Computational Inelasticity",
+            "elguedj_hughes": (
+                "T. Elguedj and T.J.R. Hughes, ICES Report 11-35 (2011)"
+            ),
+        },
+        "precision_note": "source radii are tabulated to 0.1 mm",
+        "conversion": (
+            "radial_displacement = tabulated current radius - "
+            "0.982 * 6.413 mm"
+        ),
+        "initial_middle_radius_mm": REFERENCE_INITIAL_MIDDLE_RADIUS,
+        "simo_hughes": series("simo_hughes_radius_mm"),
+        "elguedj_hughes": series("elguedj_hughes_radius_mm"),
+        "ansys_simo_1992_endpoint": {
+            "end_elongation_mm": 7.0,
+            "radial_displacement_mm": REFERENCE_RADIAL_DISPLACEMENT,
+            "source": (
+                "https://ansyshelp.ansys.com/public/views/secured/corp/v251/"
+                "en/ans_vm/Hlp_V_VM318.html"
+            ),
+        },
+    }
 
 
 def extract_history(database: str | Path) -> dict[str, Any]:
@@ -112,9 +165,23 @@ def plot_history(history: dict[str, Any], output: str | Path) -> Path:
     axes[0].plot(elongation, np.abs(reaction) / 1000.0)
     axes[0].set(xlabel="prescribed end elongation [mm]", ylabel="absolute end reaction [kN]")
     axes[1].plot(elongation, displacement, label="Hex8-Fbar")
+    reference = load_reference_curves()
+    for name, label, marker in (
+        ("simo_hughes", "Simo--Hughes tabulation", "s"),
+        ("elguedj_hughes", "Elguedj--Hughes tabulation", "^"),
+    ):
+        series = reference[name]
+        axes[1].plot(
+            series["end_elongation_mm"],
+            series["radial_displacement_mm"],
+            linestyle=":",
+            marker=marker,
+            markersize=4,
+            label=label,
+        )
     axes[1].plot(
         [7.0], [history["reference_final_radial_displacement"]], "o",
-        label="published final reference",
+        label="ANSYS/Simo endpoint",
     )
     axes[1].set(
         xlabel="prescribed end elongation [mm]",

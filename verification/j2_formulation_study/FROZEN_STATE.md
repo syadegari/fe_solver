@@ -8,17 +8,24 @@ serial/process, restart, and full-solver comparisons found only roundoff-level
 differences, so the outstanding production runs use the explicit `numba`
 backend.  The pre-Numba databases remain valid study evidence.
 
-Continuation note (2026-09-11): the remote completion batch finished
+Continuation note (2026-09-11--12): the remote completion batch finished
 `soft_bulk_hex8_fbar`, `soft_bulk_hex8`, and `coarse_hex20` through `t=1`.
-The `refined_hex8_fbar` case then settled at `dt=7.8125e-5`, with many
-successive, first-attempt convergences taking exactly six Newton iterations.
-Because the base growth threshold was five, the controller could not recover
-from the earlier cutbacks. The run was stopped cleanly at `t=0.857578125` and
-will recompute the tail from its latest retained material-state restart at
-`t=0.8`, using the case-local completion override
-`--growth-threshold refined_hex8_fbar=6`. The other cases retain the base
-threshold of five. This is the smallest relaxation supported by the observed
-history; a larger threshold has not been adopted.
+The first `refined_hex8_fbar` completion then settled at `dt=7.8125e-5`, with
+many successive, first-attempt convergences taking exactly six Newton
+iterations. Because the base growth threshold was five, the controller could
+not recover from the earlier cutbacks. That partial result was stopped at
+`t=0.857578125` and retained only as an untracked diagnostic. The final
+`refined_hex8_fbar` result was recomputed from `t=0` with the explicitly chosen
+threshold eight.
+
+The four manually launched completions all used threshold eight, as confirmed
+by their resolved HDF5 input and `/usr/bin/time` command records. The refined
+standard-Hex8 result retains its threshold-five prefix through `t=0.5` and
+uses threshold eight afterward; both circular results and the final refined
+Hex8-Fbar result use threshold eight from `t=0`. The three cases completed by
+the batch retain threshold five. Consequently, final mesh-refinement
+comparisons must disclose this controller difference and check its sensitivity
+rather than claiming that every non-formulation input is identical.
 
 The formulation-study implementation is on branch
 `investigation/j2-formulation-study`.  The original code checkpoint preceding

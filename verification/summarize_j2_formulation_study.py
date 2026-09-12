@@ -8,7 +8,10 @@ from typing import Any
 
 import numpy as np
 
-from verification.check_j2_necking import extract_history as extract_circular_history
+from verification.check_j2_necking import (
+    extract_history as extract_circular_history,
+    load_reference_curves,
+)
 from verification.check_j2_prism import (
     PrismHistory,
     compare_prism_histories,
@@ -133,13 +136,27 @@ def plot_circular_histories(
             style,
             label=label,
         )
+    reference = load_reference_curves()
+    for name, label, marker in (
+        ("simo_hughes", "Simo--Hughes tabulation", "s"),
+        ("elguedj_hughes", "Elguedj--Hughes tabulation", "^"),
+    ):
+        series = reference[name]
+        axes[1].plot(
+            series["end_elongation_mm"],
+            series["radial_displacement_mm"],
+            linestyle=":",
+            marker=marker,
+            markersize=4,
+            label=label,
+        )
     axes[0].set(xlabel="prescribed end elongation [mm]", ylabel="absolute end reaction [kN]")
     axes[1].set(xlabel="prescribed end elongation [mm]", ylabel="monitored radial displacement [mm]")
     axes[2].set(xlabel="prescribed end elongation [mm]", ylabel="maximum equivalent plastic strain")
     if min(float(coarse["final_time"]), float(refined["final_time"])) >= 1.0 - 1.0e-12:
         axes[1].plot(
             [7.0], [coarse["reference_final_radial_displacement"]], "o",
-            label="published final reference",
+            label="ANSYS/Simo endpoint",
         )
     for axis in axes:
         axis.grid(True, alpha=0.25)
@@ -199,6 +216,7 @@ def build_report(
         "prism_comparisons": prism_comparisons,
         "circular_cases": circular,
         "circular_comparison": circular_comparison,
+        "circular_reference_curves": load_reference_curves(),
     }
 
 
