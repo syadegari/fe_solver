@@ -230,9 +230,10 @@ python -m verification.diagnose_newton_conditioning DECK RESTART RUN_H5 --commit
 
 The first command writes reviewable J2 uniaxial and simple-shear CSV, compressed NumPy, PNG, and JSON results under `verification/material_point_results/`. The conditioning utility deliberately uses a dense null-space/SVD and is restricted to small diagnostics; production assembly and KKT solution remain sparse.
 
-The isolated J2 JIT feasibility experiment uses the optional `j2-jit`
-dependency and leaves the ordinary solver on the interpreted backend.  Run the
-synthetic material benchmark with:
+Numba is a required project dependency.  The shared material-to-spatial
+Truesdell tangent transform is always compiled, while the J2 return map retains
+an explicitly selectable interpreted path for numerical and performance
+verification.  Run its synthetic material benchmark with:
 
 ```bash
 python -m verification.run_j2_numba_feasibility material

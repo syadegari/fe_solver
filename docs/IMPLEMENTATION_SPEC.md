@@ -308,14 +308,13 @@ Required material tests cover validation and initialization, hydrostatic elastic
 
 The HDF5 result stores both state fields at element centroids. The six-component plastic metric carries the same component-order metadata as reported symmetric stress and strain. Do not store an additional J2/von-Mises stress field; it is derived from the saved Cauchy stress during postprocessing.
 
-An optional J2 JIT feasibility backend may compile the numeric return-map kernel
-with Numba.  It must execute the same array/scalar kernel as the interpreted
-reference path; do not maintain a second constitutive implementation.  Named
+The J2 numeric return-map kernel is compiled with the required Numba dependency.
+It executes the same array/scalar function as the interpreted verification
+path; do not maintain a second constitutive implementation.  Named
 state/property access and conversion of numeric failure codes to the common
 material response remain in the Python API wrapper.  Compile without fast-math
-or parallel transformations.  The interpreted backend remains the default
-during evaluation of the experiment, backend choice is recorded in execution
-metadata, and backend choice does not change restart/model identity.
+or parallel transformations.  Backend choice is recorded in execution
+metadata and does not change restart/model identity.
 
 Before adopting the JIT path, compare interpreted and compiled stress, state,
 and algorithmic tangent on elastic, plastic, and sequential evolved paths.
@@ -491,6 +490,11 @@ For every Gauss point:
    -\delta_{ik}\sigma_{mj}-\delta_{im}\sigma_{kj}
    \right].
    $$
+   The shared production transform evaluates these contractions with explicit
+   fixed-size loops compiled by the required Numba dependency.  Compilation
+   uses `fastmath=False`.  Keep the independent NumPy/einsum expansion in the
+   numerical tests as the reference oracle rather than as a second production
+   implementation.
 6. Build the ordinary 6-by-`3*n_e` engineering-shear `B` matrix from current gradients. Use exactly the Voigt convention in formulation label `eq:voigt-explicit`.
 7. Current quadrature volume:
    $$

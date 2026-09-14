@@ -14,7 +14,6 @@ import numpy as np
 from fe_solver.assembly import ElementBlock, assemble_internal
 from fe_solver.config import Deck, load_deck
 from fe_solver.execution import ElementExecutor
-from fe_solver.j2_kernel import available_j2_backends
 from fe_solver.materials import material_definition
 from fe_solver.preprocess import prepare_analysis
 from fe_solver.solver import run_analysis
@@ -170,8 +169,6 @@ class ElementProcessAssemblyTests(unittest.TestCase):
         _assert_assemblies_close(self, serial, process)
 
     def test_numba_j2_assembly_matches_python_in_serial_and_process_modes(self) -> None:
-        if "numba" not in available_j2_backends():
-            self.skipTest("optional Numba backend is unavailable")
         prepared = prepare_analysis(_j2_deck(load_deck(ROOT / "examples/case_a_hex8_fbar.toml")))
         model = prepared.model
         u_n = np.zeros(model.mesh.ndof)

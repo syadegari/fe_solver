@@ -6,7 +6,7 @@ import numpy as np
 from scipy import sparse
 
 from fe_solver.elements import evaluate_element, evaluate_fbar_reference_element
-from fe_solver.j2_kernel import available_j2_backends, configure_j2_backend, numba_signatures
+from fe_solver.j2_kernel import configure_j2_backend, numba_signatures
 from fe_solver.materials import (
     evaluate_material_point,
     init_j2_plasticity,
@@ -19,6 +19,7 @@ from fe_solver.materials import (
 )
 from fe_solver.material_point import run_material_path
 from fe_solver.shape import HEX20_PARENT_NODES, HEX8_PARENT_NODES, hex20_shape, hex8_shape
+from fe_solver.tangents import truesdell_voigt
 from fe_solver.types import (
     ElementRequest,
     EvaluationStatus,
@@ -35,6 +36,29 @@ from fe_solver.types import (
 
 
 _PROBE_LAYOUT = StateLayout((StateField("accumulated", (2,)),))
+_REFERENCE_VOIGT_PAIRS = ((0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (2, 0))
+
+
+def _truesdell_voigt_einsum_reference(
+    A: np.ndarray, F: np.ndarray, J: float, sigma: np.ndarray,
+) -> np.ndarray:
+    """Independent array expression retained as a verification oracle."""
+    a_pf = np.einsum("iIkK,jI,mK->ijkm", A, F, F) / J
+    identity = np.eye(3)
+    c = 0.5 * (
+        a_pf + a_pf.transpose(0, 1, 3, 2)
+        - np.einsum("ik,mj->ijkm", identity, sigma)
+        - np.einsum("im,kj->ijkm", identity, sigma)
+    )
+    D = np.empty((6, 6))
+    for row, (i, j) in enumerate(_REFERENCE_VOIGT_PAIRS):
+        for col, (k, m) in enumerate(_REFERENCE_VOIGT_PAIRS):
+            D[row, col] = (
+                c[i, j, k, k]
+                if k == m
+                else 0.5 * (c[i, j, k, m] + c[i, j, m, k])
+            )
+    return D
 
 
 def init_history_probe(request: MaterialInitRequest) -> MaterialInitResponse:
@@ -63,6 +87,23 @@ class ShapeTests(unittest.TestCase):
                 expected = np.zeros(len(nodes))
                 expected[a] = 1.0
                 np.testing.assert_allclose(N, expected, atol=2e-14)
+
+
+class TangentTransformTests(unittest.TestCase):
+    def test_truesdell_loop_matches_einsum_reference(self) -> None:
+        rng = np.random.default_rng(632)
+        for _ in range(100):
+            # General nonsymmetric data ensure the test does not rely on
+            # constitutive minor or major symmetries.
+            A = rng.normal(size=(3, 3, 3, 3))
+            F = rng.normal(size=(3, 3))
+            sigma = rng.normal(size=(3, 3))
+            J = float(np.exp(rng.uniform(np.log(0.01), np.log(100.0))))
+            expected = _truesdell_voigt_einsum_reference(A, F, J, sigma)
+            actual = truesdell_voigt(A, F, J, sigma)
+            np.testing.assert_allclose(actual, expected, rtol=2e-15, atol=5e-13)
+
+        self.assertTrue(truesdell_voigt.nopython_signatures)
 
 
 class MaterialTests(unittest.TestCase):
@@ -360,8 +401,6 @@ class MaterialTests(unittest.TestCase):
         np.testing.assert_array_equal(after_cutback.state_trial.values, repeated.state_trial.values)
 
     def test_j2_numba_kernel_matches_interpreted_kernel(self) -> None:
-        if "numba" not in available_j2_backends():
-            self.skipTest("optional Numba backend is unavailable")
         model, state = self.j2_initial_state()
         deformations = (
             np.diag([np.exp(0.001), np.exp(-0.0005), np.exp(-0.0005)]),

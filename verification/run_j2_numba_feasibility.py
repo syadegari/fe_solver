@@ -16,7 +16,6 @@ from threadpoolctl import threadpool_limits
 
 from fe_solver.config import Deck, load_deck
 from fe_solver.j2_kernel import (
-    available_j2_backends,
     configure_j2_backend,
     numba_signatures,
 )
@@ -172,8 +171,6 @@ def _time_request(
 
 
 def run_material_benchmark(args: argparse.Namespace) -> dict[str, object]:
-    if "numba" not in available_j2_backends():
-        raise ModelError("Numba is not installed; install the j2-jit optional dependency")
     elastic = np.diag([np.exp(0.001), np.exp(-0.0005), np.exp(-0.0005)])
     plastic = np.array(
         [[1.025, 0.012, 0.0], [0.0, 0.988, 0.004], [0.0, 0.0, 0.989]]

@@ -1,9 +1,8 @@
-"""Array-only finite-strain J2 kernel with optional Numba compilation."""
+"""Array-only finite-strain J2 kernel with compiled and reference execution."""
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import numpy as np
+from numba import njit
 
 
 J2_OK = 0
@@ -198,26 +197,19 @@ def j2_update_kernel(
     return J2_OK, P, A_flat, state_trial
 
 
-try:
-    from numba import njit
-except ImportError:  # pragma: no cover - exercised in installations without the extra
-    _NUMBA_KERNEL: Callable[..., tuple[int, np.ndarray, np.ndarray, np.ndarray]] | None = None
-else:
-    _NUMBA_KERNEL = njit(cache=True, fastmath=False)(j2_update_kernel)
+_NUMBA_KERNEL = njit(cache=True, fastmath=False)(j2_update_kernel)
 
 
 _ACTIVE_BACKEND = "python"
 
 
 def available_j2_backends() -> tuple[str, ...]:
-    return ("python", "numba") if _NUMBA_KERNEL is not None else ("python",)
+    return ("python", "numba")
 
 
 def configure_j2_backend(name: str) -> None:
     if name not in ("python", "numba"):
         raise ValueError("J2 backend must be 'python' or 'numba'")
-    if name == "numba" and _NUMBA_KERNEL is None:
-        raise RuntimeError("the Numba J2 backend requires the optional numba package")
     global _ACTIVE_BACKEND
     _ACTIVE_BACKEND = name
 
@@ -253,6 +245,4 @@ def evaluate_j2_kernel(
 
 
 def numba_signatures() -> tuple[object, ...]:
-    if _NUMBA_KERNEL is None:
-        return ()
     return tuple(_NUMBA_KERNEL.nopython_signatures)

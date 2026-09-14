@@ -1,8 +1,8 @@
 # J2 Numba feasibility evidence
 
-This directory retains the small, machine-readable evidence used to decide
-whether the optional Numba J2 kernel merits adoption.  Large HDF5 solver
-outputs remain ignored under `examples/results/j2_numba_feasibility/`.
+This directory retains the small, machine-readable evidence that supported
+adopting Numba as a required project dependency.  Large HDF5 solver outputs
+remain ignored under `examples/results/j2_numba_feasibility/`.
 
 The material benchmark executes the public material update, not only the
 private numeric kernel.  It covers elastic and plastic points with and without
