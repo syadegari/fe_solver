@@ -27,10 +27,6 @@ def main(argv: list[str] | None = None) -> None:
         "--debug-timing", action="store_true",
         help="record detailed element, sparse-finalization, and line-search timings",
     )
-    solve.add_argument(
-        "--j2-backend", choices=("python", "numba"), default="python",
-        help="J2 numeric kernel backend (default: interpreted Python)",
-    )
     post = commands.add_parser("postprocess", help="create temporal XDMF from a run database")
     post.add_argument("database", type=Path, help="path to run.h5")
     post.add_argument("--output", type=Path, default=None, help="output .xdmf path")
@@ -45,7 +41,6 @@ def main(argv: list[str] | None = None) -> None:
             stop_time=args.stop_time,
             num_processes=args.num_processes,
             debug_timing=args.debug_timing,
-            j2_backend=args.j2_backend,
         )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")

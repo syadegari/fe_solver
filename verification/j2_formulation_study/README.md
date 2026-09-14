@@ -50,7 +50,7 @@ conda run --no-capture-output -n py3.14 \
 
 Repeat with `--resume` after interruption.  After inspecting the gate report,
 resume every gated database to `t=1` with `--phase complete --resume`.  The
-batch defaults to the verified Numba backend, constrains nested numerical
+batch uses the mandatory Numba-compiled kernel, constrains nested numerical
 libraries to one thread per worker, retains full solver and `/usr/bin/time`
 logs, and writes a provenance manifest.  `--num-processes` remains an explicit
 user choice.
@@ -80,12 +80,10 @@ gate. A complete square-prism case is launched as:
 ```bash
 /usr/bin/time -v conda run --no-capture-output -n py3.14 \
   python -m verification.run_j2_formulation_study \
-  --case CASE --num-processes 2 --debug-timing --j2-backend numba
+  --case CASE --num-processes 2 --debug-timing
 ```
 
-Omit `--j2-backend numba` to retain the interpreted reference path. Backend
-choice is written to the execution section of `run_log.json` and does not
-change material or restart identity.
+The production J2 material kernel is always Numba compiled.
 
 Resume into the same result database by selecting a durable checkpoint:
 
@@ -93,7 +91,7 @@ Resume into the same result database by selecting a durable checkpoint:
 /usr/bin/time -v conda run --no-capture-output -n py3.14 \
   python -m verification.run_j2_formulation_study \
   --case CASE --restart-from RELATIVE_OR_ABSOLUTE_RESTART_H5 \
-  --num-processes 2 --debug-timing --j2-backend numba
+  --num-processes 2 --debug-timing
 ```
 
 If the result database extends beyond the selected checkpoint, resume first rolls every time-dependent dataset and the

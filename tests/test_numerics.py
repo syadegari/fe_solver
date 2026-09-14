@@ -6,7 +6,7 @@ import numpy as np
 from scipy import sparse
 
 from fe_solver.elements import evaluate_element, evaluate_fbar_reference_element
-from fe_solver.j2_kernel import configure_j2_backend, numba_signatures
+from fe_solver.j2_kernel import j2_update_kernel
 from fe_solver.materials import (
     evaluate_material_point,
     init_j2_plasticity,
@@ -400,65 +400,75 @@ class MaterialTests(unittest.TestCase):
         np.testing.assert_array_equal(after_cutback.P, repeated.P)
         np.testing.assert_array_equal(after_cutback.state_trial.values, repeated.state_trial.values)
 
-    def test_j2_numba_kernel_matches_interpreted_kernel(self) -> None:
-        model, state = self.j2_initial_state()
+    def test_j2_compiled_kernel_matches_python_reference(self) -> None:
+        _model, state = self.j2_initial_state()
+        properties = self.j2_properties()
+
+        def evaluate(kernel, F, state_values, need_tangent):
+            return kernel(
+                F,
+                state_values,
+                properties["shear_modulus"],
+                properties["bulk_modulus"],
+                properties["initial_yield_stress"],
+                properties["linear_hardening_modulus"],
+                properties["saturation_increment"],
+                properties["saturation_rate"],
+                need_tangent,
+            )
+
+        def assert_responses_equal(reference, compiled):
+            self.assertEqual(compiled[0], reference[0])
+            np.testing.assert_allclose(
+                compiled[1], reference[1], rtol=3e-14, atol=3e-11
+            )
+            np.testing.assert_allclose(
+                compiled[2], reference[2], rtol=3e-14, atol=3e-11
+            )
+            np.testing.assert_allclose(
+                compiled[3], reference[3], rtol=3e-14, atol=3e-14
+            )
+
         deformations = (
             np.diag([np.exp(0.001), np.exp(-0.0005), np.exp(-0.0005)]),
             np.array([[1.025, 0.012, 0.0], [0.0, 0.988, 0.004], [0.0, 0.0, 0.989]]),
         )
-        try:
-            for F in deformations:
-                for need_tangent in (False, True):
-                    request = MaterialRequest(
-                        np.eye(3), F, state, model.properties, None, 0.0, 1.0,
-                        need_tangent,
-                    )
-                    configure_j2_backend("python")
-                    interpreted = update_j2_plasticity(request)
-                    configure_j2_backend("numba")
-                    compiled = update_j2_plasticity(request)
-                    self.assertTrue(interpreted.status.ok, interpreted.status.message)
-                    self.assertEqual(compiled.status, interpreted.status)
-                    np.testing.assert_allclose(
-                        compiled.P, interpreted.P, rtol=3.0e-14, atol=3.0e-11
-                    )
-                    np.testing.assert_allclose(
-                        compiled.state_trial.values,
-                        interpreted.state_trial.values,
-                        rtol=3.0e-14,
-                        atol=3.0e-14,
-                    )
-                    if need_tangent:
-                        assert interpreted.A_alg is not None and compiled.A_alg is not None
-                        np.testing.assert_allclose(
-                            compiled.A_alg, interpreted.A_alg,
-                            rtol=3.0e-14, atol=3.0e-11,
-                        )
-                    else:
-                        self.assertIsNone(compiled.A_alg)
-            invalid_state_values = state.values.copy()
-            invalid_state_values[0] = 2.0
-            invalid_state = model.state_layout.view(invalid_state_values)
-            failure_requests = (
-                MaterialRequest(
-                    np.eye(3), np.diag([-1.0, 1.0, 1.0]), state,
-                    model.properties, None, 0.0, 1.0, False,
-                ),
-                MaterialRequest(
-                    np.eye(3), np.eye(3), invalid_state,
-                    model.properties, None, 0.0, 1.0, False,
-                ),
+        for F in deformations:
+            for need_tangent in (False, True):
+                reference = evaluate(
+                    j2_update_kernel.py_func, F, state.values, need_tangent
+                )
+                compiled = evaluate(j2_update_kernel, F, state.values, need_tangent)
+                self.assertEqual(reference[0], 0)
+                assert_responses_equal(reference, compiled)
+
+        invalid_state = state.values.copy()
+        invalid_state[0] = 2.0
+        for F, state_values in (
+            (np.diag([-1.0, 1.0, 1.0]), state.values),
+            (np.eye(3), invalid_state),
+        ):
+            reference = evaluate(j2_update_kernel.py_func, F, state_values, False)
+            compiled = evaluate(j2_update_kernel, F, state_values, False)
+            self.assertNotEqual(reference[0], 0)
+            assert_responses_equal(reference, compiled)
+
+        reference_state = state.values.copy()
+        compiled_state = state.values.copy()
+        for step in range(1, 41):
+            strain = 0.1 * step / 40.0
+            F = np.diag(
+                [np.exp(strain), np.exp(-0.5 * strain), np.exp(-0.5 * strain)]
             )
-            for request in failure_requests:
-                configure_j2_backend("python")
-                interpreted = update_j2_plasticity(request)
-                configure_j2_backend("numba")
-                compiled = update_j2_plasticity(request)
-                self.assertFalse(interpreted.status.ok)
-                self.assertEqual(compiled.status, interpreted.status)
-            self.assertTrue(numba_signatures())
-        finally:
-            configure_j2_backend("python")
+            reference = evaluate(j2_update_kernel.py_func, F, reference_state, True)
+            compiled = evaluate(j2_update_kernel, F, compiled_state, True)
+            self.assertEqual(reference[0], 0)
+            assert_responses_equal(reference, compiled)
+            reference_state = reference[3].copy()
+            compiled_state = compiled[3].copy()
+
+        self.assertGreater(compiled_state[6], 0.0)
+        self.assertTrue(j2_update_kernel.nopython_signatures)
 
     def test_generic_material_point_driver(self) -> None:
         material = neo_hook_definition("elastic", {"mu": 2.0, "kappa": 12.0})

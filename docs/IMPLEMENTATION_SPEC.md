@@ -308,21 +308,18 @@ Required material tests cover validation and initialization, hydrostatic elastic
 
 The HDF5 result stores both state fields at element centroids. The six-component plastic metric carries the same component-order metadata as reported symmetric stress and strain. Do not store an additional J2/von-Mises stress field; it is derived from the saved Cauchy stress during postprocessing.
 
-The J2 numeric return-map kernel is compiled with the required Numba dependency.
-It executes the same array/scalar function as the interpreted verification
-path; do not maintain a second constitutive implementation.  Named
-state/property access and conversion of numeric failure codes to the common
-material response remain in the Python API wrapper.  Compile without fast-math
-or parallel transformations.  Backend choice is recorded in execution
-metadata and does not change restart/model identity.
+The J2 numeric return-map kernel is always compiled with the required Numba
+dependency.  The production material path has no interpreted-backend selector.
+Named state/property access and conversion of numeric failure codes to the
+common material response remain in the Python API wrapper.  Compile without
+fast-math or parallel transformations.
 
-Before adopting the JIT path, compare interpreted and compiled stress, state,
-and algorithmic tangent on elastic, plastic, and sequential evolved paths.
-Also compare serial and process element responses and an isolated small-prism
-solve, including HDF5 fields and nonlinear/line-search decisions.  Report
-first-call/cache effects separately from warm timings.  A faster isolated
-kernel alone is insufficient: adoption requires a material end-to-end solver
-speedup without a material numerical difference.
+Required tests execute the dispatcher's `.py_func` as the uncompiled reference
+and compare it with compiled stress, state, failure status, and algorithmic
+tangent on elastic, plastic, and sequential evolved paths.  They also compare
+compiled serial and process element responses.  The retained feasibility
+evidence records first-call/cache effects, warm timings, and the full-solver
+comparisons used before adopting mandatory compilation.
 
 ---
 

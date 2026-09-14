@@ -1,4 +1,4 @@
-"""Array-only finite-strain J2 kernel with compiled and reference execution."""
+"""Numba-compiled array-only finite-strain J2 kernel."""
 from __future__ import annotations
 
 import numpy as np
@@ -16,6 +16,7 @@ J2_NONPOSITIVE_RADIAL_SCALE = 6
 _SQRT_TWO_THIRDS = float(np.sqrt(2.0 / 3.0))
 
 
+@njit(cache=True, fastmath=False)
 def j2_update_kernel(
     F: np.ndarray,
     state_n: np.ndarray,
@@ -31,9 +32,9 @@ def j2_update_kernel(
 
     This function deliberately accepts and returns only numeric scalars and
     arrays.  The public material routine owns named state/property access and
-    converts the integer status into the common material API.  The same
-    function is executed by CPython for the reference path and compiled in
-    Numba nopython mode for the feasibility path.
+    converts the integer status into the common material API.  Tests execute
+    ``j2_update_kernel.py_func`` as the uncompiled reference for this same
+    implementation.
     """
     P = np.zeros((3, 3))
     A_flat = np.empty(81) if need_tangent else np.empty(0)
@@ -195,54 +196,3 @@ def j2_update_kernel(
                 A[:, :, j, M] = dtau @ Finv.T + tau @ dFinvT
 
     return J2_OK, P, A_flat, state_trial
-
-
-_NUMBA_KERNEL = njit(cache=True, fastmath=False)(j2_update_kernel)
-
-
-_ACTIVE_BACKEND = "python"
-
-
-def available_j2_backends() -> tuple[str, ...]:
-    return ("python", "numba")
-
-
-def configure_j2_backend(name: str) -> None:
-    if name not in ("python", "numba"):
-        raise ValueError("J2 backend must be 'python' or 'numba'")
-    global _ACTIVE_BACKEND
-    _ACTIVE_BACKEND = name
-
-
-def active_j2_backend() -> str:
-    return _ACTIVE_BACKEND
-
-
-def evaluate_j2_kernel(
-    F: np.ndarray,
-    state_n: np.ndarray,
-    shear_modulus: float,
-    bulk_modulus: float,
-    initial_yield_stress: float,
-    linear_hardening_modulus: float,
-    saturation_increment: float,
-    saturation_rate: float,
-    need_tangent: bool,
-):
-    kernel = j2_update_kernel if _ACTIVE_BACKEND == "python" else _NUMBA_KERNEL
-    assert kernel is not None
-    return kernel(
-        F,
-        state_n,
-        shear_modulus,
-        bulk_modulus,
-        initial_yield_stress,
-        linear_hardening_modulus,
-        saturation_increment,
-        saturation_rate,
-        need_tangent,
-    )
-
-
-def numba_signatures() -> tuple[object, ...]:
-    return tuple(_NUMBA_KERNEL.nopython_signatures)

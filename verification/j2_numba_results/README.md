@@ -4,12 +4,14 @@ This directory retains the small, machine-readable evidence that supported
 adopting Numba as a required project dependency.  Large HDF5 solver outputs
 remain ignored under `examples/results/j2_numba_feasibility/`.
 
-The material benchmark executes the public material update, not only the
-private numeric kernel.  It covers elastic and plastic points with and without
-the algorithmic tangent, uses one BLAS thread, excludes the first call from
-the warm samples, and checks a 400-increment sequential uniaxial path.  Both
-backends execute the same numeric function; Numba compiles it in nopython mode
-with `fastmath=False`.
+The retained `material_benchmark.json` predates mandatory compilation and was
+generated through the former public backend selector.  The current `material`
+verification command instead compares the production dispatcher directly with
+its `.py_func` reference; production code no longer contains the selector.  It
+covers elastic and plastic points with and without the algorithmic tangent,
+uses one BLAS thread, excludes the first call from the warm samples, and checks
+a 400-increment sequential uniaxial path.  Both executions use the same numeric
+function, compiled in nopython mode with `fastmath=False` for production.
 
 The two bounded full-solver comparisons use the same small Hex8-Fbar prism,
 two element processes, exact Newton, and residual backtracking:
@@ -50,11 +52,8 @@ and line-search paths.  Maximum displacement differences were below
 `1.05e-9 MPa`.
 
 The evidence supports adopting the compiled J2 kernel for long J2 studies,
-while retaining the interpreted implementation as the verification reference.
-The speedup is dramatic at the material point; the remaining element
-kinematics, tangent transformations, assembly transfer, and solver work limit
-the complete-solver improvement.
-
-Select it explicitly with `--j2-backend numba` on the ordinary solver or the
-formulation-study runner.  Explicit selection keeps old commands on the
-reference path and records the backend in `run_log.json`.
+with the dispatcher's uncompiled `.py_func` retained only as the test and
+material-benchmark reference.  The speedup is dramatic at the material point;
+the remaining element kinematics, tangent transformations, assembly transfer,
+and solver work limit the complete-solver improvement.  Production solver and
+formulation-study commands no longer expose a backend selector.

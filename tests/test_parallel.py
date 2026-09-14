@@ -168,33 +168,22 @@ class ElementProcessAssemblyTests(unittest.TestCase):
             )
         _assert_assemblies_close(self, serial, process)
 
-    def test_numba_j2_assembly_matches_python_in_serial_and_process_modes(self) -> None:
+    def test_compiled_j2_assembly_matches_in_serial_and_process_modes(self) -> None:
         prepared = prepare_analysis(_j2_deck(load_deck(ROOT / "examples/case_a_hex8_fbar.toml")))
         model = prepared.model
         u_n = np.zeros(model.mesh.ndof)
         u_trial = _homogeneous_displacement(model.mesh.X)
         materials = tuple(block.material for block in model.blocks)
         element_count = sum(len(block.connectivity) for block in model.blocks)
-        with ElementExecutor(
-            materials, element_count, 1, j2_backend="python"
-        ) as executor:
-            python = assemble_internal(
+        with ElementExecutor(materials, element_count, 1) as executor:
+            serial = assemble_internal(
                 model, u_n, u_trial, 0.0, 0.1, True, element_executor=executor
             )
-        with ElementExecutor(
-            materials, element_count, 1, j2_backend="numba"
-        ) as executor:
-            numba_serial = assemble_internal(
+        with ElementExecutor(materials, element_count, 2) as executor:
+            process = assemble_internal(
                 model, u_n, u_trial, 0.0, 0.1, True, element_executor=executor
             )
-        with ElementExecutor(
-            materials, element_count, 2, j2_backend="numba"
-        ) as executor:
-            numba_process = assemble_internal(
-                model, u_n, u_trial, 0.0, 0.1, True, element_executor=executor
-            )
-        _assert_assemblies_close(self, python, numba_serial, rtol=1.0e-12, atol=1.0e-10)
-        _assert_assemblies_close(self, python, numba_process, rtol=1.0e-12, atol=1.0e-10)
+        _assert_assemblies_close(self, serial, process, rtol=1.0e-12, atol=1.0e-10)
 
     def test_persistent_process_solver_matches_serial_and_logs_timing(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8.toml")

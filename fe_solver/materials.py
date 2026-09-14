@@ -13,7 +13,7 @@ from .j2_kernel import (
     J2_NONPOSITIVE_STATE,
     J2_NONUNIMODULAR_STATE,
     J2_OK,
-    evaluate_j2_kernel,
+    j2_update_kernel,
 )
 from .types import (
     EvaluationStatus,
@@ -162,7 +162,7 @@ def update_j2_plasticity(request: MaterialRequest) -> MaterialResponse:
             float(request.properties["saturation_increment"]),
             float(request.properties["saturation_rate"]),
         )
-        status, P, A_flat, state_values = evaluate_j2_kernel(
+        status, P, A_flat, state_values = j2_update_kernel(
             F, request.state_n.values, *properties, request.need_tangent
         )
     except (KeyError, TypeError, ValueError) as exc:

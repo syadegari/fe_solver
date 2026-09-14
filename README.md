@@ -123,10 +123,10 @@ repository root on a 16-core worker, run them one at a time with:
 ```bash
 /usr/bin/time -v conda run --no-capture-output -n py3.14 \
   python -m fe_solver examples/periodic_core_j2_matrix_isochoric_hex8_fbar.toml \
-  --num-processes 16 --debug-timing --j2-backend numba
+  --num-processes 16 --debug-timing
 /usr/bin/time -v conda run --no-capture-output -n py3.14 \
   python -m fe_solver examples/periodic_core_j2_matrix_shear_hex8_fbar.toml \
-  --num-processes 16 --debug-timing --j2-backend numba
+  --num-processes 16 --debug-timing
 ```
 
 After either solve, create compact numerical histories and the temporal ParaView entry point with:
@@ -231,30 +231,17 @@ python -m verification.diagnose_newton_conditioning DECK RESTART RUN_H5 --commit
 The first command writes reviewable J2 uniaxial and simple-shear CSV, compressed NumPy, PNG, and JSON results under `verification/material_point_results/`. The conditioning utility deliberately uses a dense null-space/SVD and is restricted to small diagnostics; production assembly and KKT solution remain sparse.
 
 Numba is a required project dependency.  The shared material-to-spatial
-Truesdell tangent transform is always compiled, while the J2 return map retains
-an explicitly selectable interpreted path for numerical and performance
-verification.  Run its synthetic material benchmark with:
+Truesdell tangent transform and J2 return map are always compiled in production.
+The synthetic material benchmark compares the J2 dispatcher with its
+uncompiled `.py_func` reference:
 
 ```bash
 python -m verification.run_j2_numba_feasibility material
 ```
 
-The runner can also produce separate, directly comparable small-prism results:
-
-```bash
-python -m verification.run_j2_numba_feasibility prism \
-  --backend python --num-processes 2 --stop-time 0.02
-python -m verification.run_j2_numba_feasibility prism \
-  --backend numba --num-processes 2 --stop-time 0.02
-```
-
-Use its `compare-prisms` subcommand for numerical, nonlinear-path, and internal
-wall-time comparison.  JIT outputs are isolated under
-`examples/results/j2_numba_feasibility/` and never overwrite formulation-study
-databases.  Once the equivalence checks have passed, select the compiled kernel
-for an ordinary J2 solve or formulation-study case with `--j2-backend numba`.
-The default remains `python`, so installing the optional dependency alone does
-not silently change a result path.
+The earlier full-solver Python/Numba comparison databases and their
+`compare-prisms` reader remain as historical adoption evidence.  Backend
+selection is no longer exposed by the solver or formulation-study commands.
 
 ## Verify
 

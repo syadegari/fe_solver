@@ -140,7 +140,6 @@ def _solver_command(
     target_time: float,
     restart_from: Path | None,
     num_processes: int,
-    backend: str,
     resource_log: Path,
     growth_threshold: int | None = None,
 ) -> list[str]:
@@ -150,7 +149,6 @@ def _solver_command(
         "--case", case_name,
         "--num-processes", str(num_processes),
         "--debug-timing",
-        "--j2-backend", backend,
         "--output-directory", str(output_directory),
     ]
     if target_time < 1.0 - 1.0e-12:
@@ -266,7 +264,6 @@ def _load_or_create_manifest(
     *,
     phase: str,
     num_processes: int,
-    backend: str,
     growth_thresholds: dict[str, int],
     argv: list[str],
 ) -> dict[str, Any]:
@@ -287,7 +284,6 @@ def _load_or_create_manifest(
             "unix_time": time(),
             "phase": phase,
             "num_processes": num_processes,
-            "j2_backend": backend,
             "growth_thresholds": growth_thresholds,
             "repository": _repository_provenance(),
             "environment": _environment_provenance(),
@@ -302,7 +298,6 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--phase", choices=("gate", "complete"), required=True)
     parser.add_argument("--num-processes", type=int, required=True)
-    parser.add_argument("--j2-backend", choices=("python", "numba"), default="numba")
     parser.add_argument("--cases", nargs="+", choices=OUTSTANDING_CASES)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--circular-restart", type=Path, default=None)
@@ -339,7 +334,6 @@ def main(argv: list[str] | None = None) -> None:
         manifest_path,
         phase=args.phase,
         num_processes=args.num_processes,
-        backend=args.j2_backend,
         growth_thresholds=growth_thresholds,
         argv=sys.argv if argv is None else [sys.argv[0], *argv],
     )
@@ -383,7 +377,6 @@ def main(argv: list[str] | None = None) -> None:
             target_time=target_time,
             restart_from=restart,
             num_processes=args.num_processes,
-            backend=args.j2_backend,
             resource_log=resource_log,
             growth_threshold=growth_thresholds.get(case_name),
         )
