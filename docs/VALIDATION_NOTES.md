@@ -33,3 +33,41 @@ Focused investigation of the post-yield slowdown:
 Not executed in the preparation environment:
 
 - the full circular-bar necking history with Newton backtracking. The benchmark remains a long acceptance run in the current pure-Python implementation.
+
+## Periodic elastic-core/J2-matrix feature validation (2026-09-14)
+
+The production-resolution isochoric-uniaxial and simple-shear cases were run on a `16 x 16 x 16` periodic cube with
+a centered `8 x 8 x 8` core.  The conforming mesh has 4,913 nodes and 4,096 elements: 3,584 J2/Voce Hex8-Fbar
+matrix elements and 512 neo-Hookean standard Hex8 core elements.  Both databases contain 62 complete accepted
+states from `t=0` through `t=1`; each solve used 61 increments, no cutbacks, and at most seven Newton iterations.
+
+| quantity | isochoric uniaxial | simple shear |
+| --- | ---: | ---: |
+| final imposed macro component | `F11 = 1.2` | `F12 = 0.2` |
+| force-balance infinity norm | `4.905e-12` | `5.296e-12` |
+| constraint-residual infinity norm | `2.776e-17` | `2.776e-17` |
+| minimum material-point `J` | `0.651147` | `0.945420` |
+| independent maximum `|<F_raw>_0-Fbar|_inf` | `5.329e-14` | `1.843e-14` |
+| final macroscopic nominal component [MPa] | `P11 = 483.996` | `P12 = 414.261` |
+| final matrix-average Cauchy component [MPa] | `sigma11 = 427.022` | `sigma12 = 388.281` |
+| final core-average Cauchy component [MPa] | `sigma11 = 1650.600` | `sigma12 = 596.118` |
+| elapsed wall time, 16 element workers | `2:54:47` | `2:48:16` |
+
+All saved nodal, stress, strain, and material-state arrays are finite.  The HDF5 and XDMF outputs retain separate
+matrix/core branches, and only the matrix contains `equivalent_plastic_strain` and `plastic_metric_inverse`.  The
+phase-average histories show the expected higher stress in the elastic core after matrix yielding.  ParaView's XDMF
+Reader T was visually checked on the `4/2` smoke result: phase selections persist throughout playback using the stable
+phase-before-time hierarchy.  VTK does not propagate temporal collection names, so the branches appear as deterministic
+`Block0` (matrix) and `Block1` (core).
+
+The remote source snapshot was prepared with `git archive` from revision `8e52a01`.  Because an archive has no `.git`
+directory, the result databases record `git_commit="unknown"`; independent recomputation confirms that both stored
+model-identity hashes exactly match the current 16/8 meshes and decks.  Local postprocessing used revision `a955041`.
+The detailed local artifacts are intentionally ignored by Git and reside under the corresponding
+`examples/results/periodic_core_j2_matrix_*` directories: `run.h5`, `run_log.json`, `terminal.log`,
+`periodic_composite_history.json`, its PNG plot, and the XDMF entry point/sidecar.
+
+The 48-test unit suite and the default eight-deck acceptance suite pass after these changes.  All eight acceptance
+decks complete without cutbacks.  Timing telemetry from the production runs attributes approximately 92.5 percent of
+wall time to sparse KKT factorization and approximately 6.4 percent to all element phases, identifying the global
+linear solver rather than element processing as the dominant performance limit for these cases.
