@@ -1551,6 +1551,13 @@ modulus.  The two phases consequently have the same infinitesimal elastic tangen
 is the harder phase after matrix yielding because it remains elastic; an arbitrary elastic-modulus contrast is not
 introduced at the same time.
 
+Use centroidal Hex8-Fbar elements for the J2 matrix and standard full-integration Hex8 elements for the elastic core.
+Both formulations use the same conforming eight-node mesh and share interface displacement nodes.  The mixed choice
+is intentional: F-bar remains in the plastically incompressible matrix, while the core's matched reference elastic
+constants correspond to approximately `nu = 0.29` and do not require an incompressibility treatment.  Consequently,
+phase-response differences in this integration example combine constitutive and element-formulation choices and must
+not be presented as an isolated material-only comparison.
+
 Run the two macroscopic paths from D1/D2: isochoric uniaxial stretch to 1.2 and simple shear to 0.2.  The single new
 case-specific numerical acceptance check is
 

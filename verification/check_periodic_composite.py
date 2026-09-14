@@ -76,19 +76,26 @@ def extract_periodic_composite_history(database: str | Path) -> dict[str, Any]:
 
         block_data = []
         state_fields: dict[str, list[str]] = {}
+        formulations: dict[str, str] = {}
         for name in sorted(archive["mesh/blocks"]):
             mesh_block = archive[f"mesh/blocks/{name}"]
             result_block = archive[f"results/blocks/{name}"]
             formulation = str(mesh_block.attrs["formulation"])
-            if formulation != "hex8_fbar":
+            if formulation not in {"hex8", "hex8_fbar"}:
                 raise ModelError(
-                    "periodic composite extraction currently requires hex8_fbar blocks"
+                    "periodic composite extraction requires eight-node hex8 or "
+                    "hex8_fbar blocks"
                 )
             region = str(mesh_block.attrs["region"])
             connectivity = np.asarray(mesh_block["connectivity"], dtype=np.int64)
+            if connectivity.ndim != 2 or connectivity.shape[1] != 8:
+                raise ModelError(
+                    "periodic composite extraction requires eight-node connectivity"
+                )
             stress = np.asarray(result_block["cauchy_stress"][:complete], dtype=float)
             fields = sorted(result_block["state"].keys()) if "state" in result_block else []
             state_fields[region] = fields
+            formulations[region] = formulation
             block_data.append((region, connectivity, stress))
 
     periodic = resolved.get("constraints", {}).get("periodic_rve", [])
@@ -166,6 +173,7 @@ def extract_periodic_composite_history(database: str | Path) -> dict[str, Any]:
         "volume_average_F_error_inf": average_F_error.tolist(),
         "maximum_volume_average_F_error_inf": float(np.max(average_F_error)),
         "state_fields_by_region": state_fields,
+        "formulations_by_region": formulations,
     }
 
 

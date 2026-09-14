@@ -360,6 +360,8 @@ class TimeRestartTests(unittest.TestCase):
         deck = Deck(original.path, data, original.curves)
         mesh = read_gmsh(deck.resolve(data["mesh"]["file"]))
         model = build_model(deck, mesh)
+        formulations = {block.region: block.formulation for block in model.blocks}
+        self.assertEqual(formulations, {"matrix": "hex8_fbar", "core": "hex8"})
         macro = macro_deformation_function(
             data["constraints"]["periodic_rve"][0], deck
         )
@@ -400,6 +402,10 @@ class TimeRestartTests(unittest.TestCase):
             {"plastic_metric_inverse", "equivalent_plastic_strain"},
         )
         self.assertEqual(history["state_fields_by_region"]["core"], [])
+        self.assertEqual(
+            history["formulations_by_region"],
+            {"matrix": "hex8_fbar", "core": "hex8"},
+        )
         self.assertEqual(xml.count('Grid Name="matrix:voce_matrix"'), 1)
         self.assertEqual(xml.count('Grid Name="core:elastic_core"'), 1)
 

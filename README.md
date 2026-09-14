@@ -108,6 +108,10 @@ neo-Hookean core and a finite-strain J2/Voce matrix.  Their reference elastic ta
 `mu = 80193.8 MPa` and bulk modulus `164210 MPa`; the neo-Hookean input therefore uses
 `kappa = K - 2 mu/3 = 110747.4666666667 MPa`.  The core becomes the harder phase after the matrix yields without
 combining plastic contrast with an arbitrary initial elastic contrast.
+The J2 matrix uses centroidal Hex8-Fbar elements, while the compressible elastic core uses standard full-integration
+Hex8 elements on the same conforming nodal mesh.  This intentionally exercises mixed material and element blocks;
+the core's matched reference constants correspond to approximately `nu = 0.29`, so standard Hex8 does not face a
+near-incompressible elastic-locking regime here.
 
 The isochoric-uniaxial deck prescribes `F11 = 1.2`, `F22 = F33 = 1/sqrt(1.2)` at the endpoint.  The shear deck
 prescribes `F12 = 0.2`.  Both verify the reference-volume average of raw kinematic `F` against the imposed macro
