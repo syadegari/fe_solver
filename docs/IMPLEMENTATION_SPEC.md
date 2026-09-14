@@ -1317,6 +1317,11 @@ Keep the original database with the visualization artifacts. Generate views only
 Verify actual reader arrays and Warp By Vector through `verification/check_paraview.py` when ParaView is available;
 XML parsing alone is not an interoperability test.
 
+The generated file targets ParaView's **XDMF Reader T**. This reader must expose every `region:material` grid as a
+named selectable block throughout the temporal collection. Reader S flattening the spatial collection into one unnamed
+`Block0` is not the intended visualization path and is not a reason to duplicate phase identifiers in the results
+database.
+
 ### 21.4 Restart contents
 
 Store enough to reproduce the accepted state exactly:
