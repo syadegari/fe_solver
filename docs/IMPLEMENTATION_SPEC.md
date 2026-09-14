@@ -1318,9 +1318,14 @@ Verify actual reader arrays and Warp By Vector through `verification/check_parav
 XML parsing alone is not an interoperability test.
 
 The generated file targets ParaView's **XDMF Reader T**. This reader must expose every `region:material` grid as a
-named selectable block throughout the temporal collection. Reader S flattening the spatial collection into one unnamed
-`Block0` is not the intended visualization path and is not a reason to duplicate phase identifiers in the results
-database.
+distinct selectable branch throughout the temporal collection. Reader S flattening the spatial collection into one
+block is not the intended visualization path and is not a reason to duplicate phase identifiers in the results database.
+A phase-before-time hierarchy gives each region a stable composite-selection path, so a selected or extracted
+region remains visible while the timeline advances; do not repeat phase blocks beneath per-time spatial collections.
+The current VTK XDMF3 reader does not propagate collection-grid names into multiblock metadata, however, so these
+stable branches appear in Reader T as deterministic `Block0`, `Block1`, and so on, ordered by their HDF5 block keys.
+Obtaining both persistent selection and named branches requires a different visualization container or a reader-side
+metadata layer rather than further XDMF collection nesting.
 
 ### 21.4 Restart contents
 

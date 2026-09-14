@@ -86,10 +86,12 @@ Field values remain in the solver's `run.h5`; the views store selection metadata
 files together (or retain their relative paths). No visualization files are produced during solution. Ordinary HDF references
 avoid XML HyperSlab compatibility problems in ParaView's XDMF3 reader.
 
-When ParaView asks which implementation should open the file, select **XDMF Reader T**. It preserves the temporal
-collection and the named region/material blocks. **XDMF Reader S** flattens this structure into an unnamed `Block0`,
-and the generic **XDMF Reader** is not compatible with these generated temporal files. With Reader T, use the
-Multiblock Inspector or Extract Block to select individual region/material grids.
+When ParaView asks which implementation should open the file, select **XDMF Reader T**. **XDMF Reader S** flattens
+the spatial structure into one block, and the generic **XDMF Reader** is not compatible with these generated temporal
+files. Reader T presents one persistent multiblock branch per region/material, so Multiblock Inspector or Extract Block
+selections remain active as the time slider advances. VTK currently labels those temporal collection branches
+`Block0`, `Block1`, and so on rather than propagating their XDMF names; their deterministic order follows the HDF5
+block keys shown under `/mesh/blocks`.
 
 Stress and both strain measures are stored as six components in the order **`11,22,33,12,23,13`**.
 Shear strains are tensor components, **not doubled engineering shears**. HDF5 datasets record this convention in

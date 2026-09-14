@@ -406,8 +406,14 @@ class TimeRestartTests(unittest.TestCase):
             history["formulations_by_region"],
             {"matrix": "hex8_fbar", "core": "hex8"},
         )
-        self.assertEqual(xml.count('Grid Name="matrix:voce_matrix"'), 1)
-        self.assertEqual(xml.count('Grid Name="core:elastic_core"'), 1)
+        self.assertIn(
+            'Grid Name="matrix:voce_matrix" GridType="Collection" CollectionType="Temporal"',
+            xml,
+        )
+        self.assertIn(
+            'Grid Name="core:elastic_core" GridType="Collection" CollectionType="Temporal"',
+            xml,
+        )
 
     def test_postprocess_reports_detected_schema_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -734,11 +740,18 @@ class TimeRestartTests(unittest.TestCase):
                         self.assertEqual(ds.attrs["shear_scale"], 1.)
                         np.testing.assert_allclose(ds[-1, 0], pack_symmetric(matrix), atol=1e-14)
             xdmf = write_xdmf(path)
-            grids = ET.parse(xdmf).findall("./Domain/Grid/Grid")
+            root = ET.parse(xdmf).getroot()
+            spatial = root.find("./Domain/Grid")
+            self.assertEqual(spatial.attrib["Name"], "phase_blocks")
+            self.assertEqual(spatial.attrib["CollectionType"], "Spatial")
+            phase = spatial.find("./Grid")
+            self.assertEqual(phase.attrib["CollectionType"], "Temporal")
+            grids = phase.findall("./Grid")
+            self.assertEqual([grid.attrib["Name"] for grid in grids], ["state"] * 3)
             with h5py.File(path, "r") as archive, h5py.File(xdmf.with_suffix(".xdmf.h5"), "r") as visual:
                 for step, grid in enumerate(grids):
                     for name in expected:
-                        full = grid.find(f"./Grid/Attribute[@Name='{name}']")
+                        full = grid.find(f"./Attribute[@Name='{name}']")
                         self.assertEqual(full.attrib["AttributeType"], "Matrix")
                         self.assertEqual(full.find("DataItem").attrib["Dimensions"], "32 6")
                         item = full.find("DataItem")
@@ -749,7 +762,7 @@ class TimeRestartTests(unittest.TestCase):
                         self.assertEqual(ds.id.get_storage_size(), 0)
                         np.testing.assert_array_equal(ds[:], archive[f"results/blocks/0000/{name}"][step])
                         for label in TENSOR_COMPONENTS:
-                            self.assertIsNone(grid.find(f"./Grid/Attribute[@Name='{name}_{label}']"))
+                            self.assertIsNone(grid.find(f"./Attribute[@Name='{name}_{label}']"))
 
 
 if __name__ == "__main__":

@@ -127,25 +127,33 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
 
         xdmf = ET.Element("Xdmf", Version="3.0")
         domain = ET.SubElement(xdmf, "Domain")
-        temporal = ET.SubElement(
-            domain, "Grid", Name="accepted_states", GridType="Collection", CollectionType="Temporal"
+        spatial = ET.SubElement(
+            domain,
+            "Grid",
+            Name="phase_blocks",
+            GridType="Collection",
+            CollectionType="Spatial",
         )
-        for step, time in enumerate(times):
-            spatial = ET.SubElement(
-                temporal, "Grid", Name=f"state_{step:06d}", GridType="Collection", CollectionType="Spatial"
+        for name in block_names:
+            mesh_block = source[f"mesh/blocks/{name}"]
+            result_block = source[f"results/blocks/{name}"]
+            formulation = str(mesh_block.attrs["formulation"])
+            cell_count, node_per_cell = map(int, mesh_block["connectivity"].shape)
+            phase = ET.SubElement(
+                spatial,
+                "Grid",
+                Name=f"{mesh_block.attrs['region']}:{mesh_block.attrs['material']}",
+                GridType="Collection",
+                CollectionType="Temporal",
             )
-            ET.SubElement(spatial, "Time", Value=f"{time:.17g}")
-            for name in block_names:
-                mesh_block = source[f"mesh/blocks/{name}"]
-                result_block = source[f"results/blocks/{name}"]
-                formulation = str(mesh_block.attrs["formulation"])
-                cell_count, node_per_cell = map(int, mesh_block["connectivity"].shape)
+            for step, time in enumerate(times):
                 grid = ET.SubElement(
-                    spatial,
+                    phase,
                     "Grid",
-                    Name=f"{mesh_block.attrs['region']}:{mesh_block.attrs['material']}",
+                    Name="state",
                     GridType="Uniform",
                 )
+                ET.SubElement(grid, "Time", Value=f"{time:.17g}")
                 topology_name = "Hexahedron_20" if formulation == "hex20" else "Hexahedron"
                 topology = ET.SubElement(
                     grid, "Topology", TopologyType=topology_name, NumberOfElements=str(cell_count)
