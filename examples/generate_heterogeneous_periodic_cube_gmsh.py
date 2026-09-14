@@ -1,4 +1,4 @@
-"""Generate a conforming 8x8x8 periodic cube with a central 4x4x4 core."""
+"""Generate a conforming periodic cube with a half-width central core."""
 from __future__ import annotations
 
 import argparse
@@ -66,14 +66,30 @@ def find_origin() -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default="heterogeneous_periodic_cube_8x8x8.msh")
+    parser.add_argument(
+        "--out",
+        help="output .msh path (defaults to a name derived from the resolution)",
+    )
+    parser.add_argument(
+        "--elements-per-edge",
+        type=int,
+        default=8,
+        help="total cube divisions per edge; must be a positive multiple of four",
+    )
     args = parser.parse_args()
+    elements_per_edge = int(args.elements_per_edge)
+    if elements_per_edge <= 0 or elements_per_edge % 4:
+        parser.error("--elements-per-edge must be a positive multiple of four")
+    output = args.out or (
+        f"heterogeneous_periodic_cube_{elements_per_edge}x"
+        f"{elements_per_edge}x{elements_per_edge}.msh"
+    )
     coordinates = (0.0, 0.25, 0.75, 1.0)
 
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
-        gmsh.model.add("heterogeneous_periodic_cube")
+        gmsh.model.add(f"heterogeneous_periodic_cube_{elements_per_edge}")
         boxes = []
         for i in range(3):
             for j in range(3):
@@ -103,8 +119,14 @@ def main() -> None:
         for _, tag in gmsh.model.getEntities(1):
             box = bounds(1, tag)
             length = max(box[i + 3] - box[i] for i in range(3))
-            divisions = round(length / 0.125)
-            if divisions not in (2, 4) or not near(length, divisions * 0.125):
+            divisions = round(length * elements_per_edge)
+            expected_divisions = {
+                elements_per_edge // 4,
+                elements_per_edge // 2,
+            }
+            if divisions not in expected_divisions or not near(
+                length, divisions / elements_per_edge
+            ):
                 raise RuntimeError(f"unexpected curve length {length} for curve {tag}")
             gmsh.model.mesh.setTransfiniteCurve(tag, divisions + 1)
         for _, tag in gmsh.model.getEntities(2):
@@ -140,18 +162,26 @@ def main() -> None:
                     raise RuntimeError(f"non-Hex8 elements in {name}: {present}")
                 count += present[expected_type]
             counts[name] = count
-        if counts != {"matrix": 448, "core": 64}:
+        core_count = (elements_per_edge // 2) ** 3
+        expected_counts = {
+            "matrix": elements_per_edge**3 - core_count,
+            "core": core_count,
+        }
+        if counts != expected_counts:
             raise RuntimeError(f"unexpected element counts: {counts}")
         node_tags, _, _ = gmsh.model.mesh.getNodes()
-        if len(node_tags) != 729:
-            raise RuntimeError(f"expected 729 nodes, got {len(node_tags)}")
+        expected_nodes = (elements_per_edge + 1) ** 3
+        if len(node_tags) != expected_nodes:
+            raise RuntimeError(
+                f"expected {expected_nodes} nodes, got {len(node_tags)}"
+            )
         for name, tags in faces.items():
             if name.endswith("max"):
                 for tag in tags:
                     master, slaves, masters, _ = gmsh.model.mesh.getPeriodicNodes(2, tag)
                     if int(master) == 0 or len(slaves) == 0 or len(slaves) != len(masters):
                         raise RuntimeError(f"invalid periodic map on {name} patch {tag}")
-        gmsh.write(args.out)
+        gmsh.write(output)
     finally:
         gmsh.finalize()
 

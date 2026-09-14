@@ -91,8 +91,14 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
     except OSError as exc:
         raise ModelError(f"cannot read results database {database}") from exc
     with source:
-        if int(source.attrs.get("schema_version", -1)) != RESULT_SCHEMA_VERSION:
-            raise ModelError("unsupported results database schema version")
+        detected_version = int(source.attrs.get("schema_version", -1))
+        if detected_version != RESULT_SCHEMA_VERSION:
+            raise ModelError(
+                "unsupported results database schema version "
+                f"{detected_version}; current postprocessing requires version "
+                f"{RESULT_SCHEMA_VERSION}. Rerun the simulation with the current "
+                "solver; results databases are not converted in place"
+            )
         complete = int(source["results"].attrs.get("n_complete_steps", -1))
         times = np.asarray(source["results/time"][:complete], dtype=float)
         if complete < 1 or len(times) != complete:

@@ -28,6 +28,9 @@ from verification.check_j2_necking import (
     REFERENCE_INITIAL_MIDDLE_RADIUS,
     load_reference_curves,
 )
+from verification.check_periodic_composite import (
+    extract_periodic_composite_history,
+)
 from verification.run_j2_formulation_batch import (
     _parse_growth_thresholds,
     latest_restart,
@@ -76,12 +79,22 @@ class MeshConstraintTests(unittest.TestCase):
         np.testing.assert_allclose(constraints.C @ affine_u.ravel(), constraints.rhs(1.0), atol=2e-15)
 
     def test_heterogeneous_periodic_mesh_partition(self) -> None:
-        mesh = read_gmsh(ROOT / "examples/heterogeneous_periodic_cube_8x8x8.msh")
-        self.assertEqual(len(mesh.X), 729)
-        self.assertEqual(len(mesh.elements), 512)
-        self.assertEqual(len(mesh.volume_groups["core"]), 64)
-        self.assertEqual(len(mesh.volume_groups["matrix"]), 448)
-        self.assertEqual(set(mesh.periodic_maps), {"xmax", "ymax", "zmax"})
+        for divisions in (4, 8, 16):
+            with self.subTest(divisions=divisions):
+                mesh = read_gmsh(
+                    ROOT
+                    / f"examples/heterogeneous_periodic_cube_{divisions}x{divisions}x{divisions}.msh"
+                )
+                core = (divisions // 2) ** 3
+                self.assertEqual(len(mesh.X), (divisions + 1) ** 3)
+                self.assertEqual(len(mesh.elements), divisions**3)
+                self.assertEqual(len(mesh.volume_groups["core"]), core)
+                self.assertEqual(
+                    len(mesh.volume_groups["matrix"]), divisions**3 - core
+                )
+                self.assertEqual(
+                    set(mesh.periodic_maps), {"xmax", "ymax", "zmax"}
+                )
 
     def test_necking_mesh_groups_and_positive_reference_jacobians(self) -> None:
         mesh = read_gmsh(ROOT / "examples/necking_bar_quarter_hex8.msh")
@@ -337,6 +350,69 @@ class TimeRestartTests(unittest.TestCase):
             text = xdmf.read_text(encoding="utf-8")
             self.assertIn('Name="state_plastic_metric_inverse" AttributeType="Matrix"', text)
             self.assertIn('Name="component_order" Value="11,22,33,12,23,13"', text)
+
+    def test_mixed_periodic_output_routes_state_and_recovers_average_F(self) -> None:
+        original = load_deck(
+            ROOT / "examples/periodic_core_j2_matrix_shear_hex8_fbar.toml"
+        )
+        data = copy.deepcopy(original.data)
+        data["mesh"]["file"] = "heterogeneous_periodic_cube_4x4x4.msh"
+        deck = Deck(original.path, data, original.curves)
+        mesh = read_gmsh(deck.resolve(data["mesh"]["file"]))
+        model = build_model(deck, mesh)
+        macro = macro_deformation_function(
+            data["constraints"]["periodic_rve"][0], deck
+        )
+        F = macro(0.01)
+        u = (mesh.X @ (F - np.eye(3)).T).ravel()
+        assembly = assemble_internal(model, np.zeros_like(u), u, 0.0, 0.01, False)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mixed.h5"
+            with HDF5ResultWriter(path, model) as writer:
+                writer.append(0.01, u, np.zeros_like(u), assembly)
+            history = extract_periodic_composite_history(path)
+            xdmf = write_xdmf(path)
+            xml = xdmf.read_text(encoding="utf-8")
+            with h5py.File(path, "r") as archive:
+                self.assertEqual(
+                    archive["results/nodal/constraint_reaction"].attrs[
+                        "sign_convention"
+                    ],
+                    "constraint_on_structure=-C.T@lambda",
+                )
+                regions = {
+                    str(archive[f"mesh/blocks/{name}"].attrs["region"]): name
+                    for name in archive["mesh/blocks"]
+                }
+                matrix_state = archive[
+                    f"results/blocks/{regions['matrix']}/state"
+                ]
+                core_state = archive[f"results/blocks/{regions['core']}/state"]
+                self.assertEqual(
+                    set(matrix_state),
+                    {"plastic_metric_inverse", "equivalent_plastic_strain"},
+                )
+                self.assertEqual(list(core_state), [])
+
+        self.assertLess(history["maximum_volume_average_F_error_inf"], 2.0e-15)
+        self.assertEqual(
+            set(history["state_fields_by_region"]["matrix"]),
+            {"plastic_metric_inverse", "equivalent_plastic_strain"},
+        )
+        self.assertEqual(history["state_fields_by_region"]["core"], [])
+        self.assertEqual(xml.count('Grid Name="matrix:voce_matrix"'), 1)
+        self.assertEqual(xml.count('Grid Name="core:elastic_core"'), 1)
+
+    def test_postprocess_reports_detected_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "old.h5"
+            with h5py.File(path, "w") as archive:
+                archive.attrs["schema_version"] = 2
+            with self.assertRaisesRegex(
+                ModelError,
+                "version 2; current postprocessing requires version 3.*Rerun",
+            ):
+                write_xdmf(path)
 
     def test_small_j2_prism_decks_are_paired_and_diagnostic_reads_database(self) -> None:
         fbar = load_deck(ROOT / "examples/j2_necking_prism_small_hex8_fbar.toml")

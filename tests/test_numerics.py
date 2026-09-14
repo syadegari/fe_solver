@@ -167,6 +167,29 @@ class MaterialTests(unittest.TestCase):
         sigma_rotated = rotated.P @ (Q @ F).T / np.linalg.det(Q @ F)
         np.testing.assert_allclose(sigma_rotated, Q @ sigma @ Q.T, atol=2e-14)
 
+    def test_periodic_composite_materials_match_reference_elasticity(self) -> None:
+        mu = 80193.8
+        bulk_modulus = 164210.0
+        neo_properties = {
+            "mu": mu,
+            "kappa": bulk_modulus - 2.0 * mu / 3.0,
+        }
+        empty_state = StateLayout().view(np.empty(0))
+        neo = update_neo_hook(
+            MaterialRequest(
+                np.eye(3), np.eye(3), empty_state, neo_properties,
+                None, 0.0, 0.0, True,
+            )
+        )
+        j2_model, j2_state = self.j2_initial_state()
+        j2 = update_j2_plasticity(
+            MaterialRequest(
+                np.eye(3), np.eye(3), j2_state, j2_model.properties,
+                None, 0.0, 0.0, True,
+            )
+        )
+        np.testing.assert_allclose(neo.A_alg, j2.A_alg, rtol=0.0, atol=2.0e-11)
+
     def test_j2_initialization_hydrostatic_response_and_properties(self) -> None:
         model, state = self.j2_initial_state()
         self.assertEqual(model.model_root, "j2_plasticity")

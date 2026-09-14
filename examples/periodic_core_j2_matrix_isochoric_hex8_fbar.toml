@@ -1,0 +1,93 @@
+[analysis]
+name = "periodic_core_j2_matrix_isochoric_hex8_fbar"
+t_start = 0.0
+t_end = 1.0
+
+[mesh]
+file = "heterogeneous_periodic_cube_16x16x16.msh"
+format = "gmsh_msh41"
+
+[time]
+dt_initial = 0.02
+dt_min = 1.0e-6
+dt_max = 0.02
+cutback_factor = 0.5
+growth_factor = 1.25
+grow_if_newton_iterations_le = 8
+max_attempts_per_increment = 20
+
+[nonlinear]
+method = "newton"
+line_search = "backtracking"
+line_search_reduction = 0.5
+line_search_armijo = 1.0e-4
+line_search_min_alpha = 1.0e-4
+line_search_max_backtracks = 14
+max_iterations = 30
+force_rtol = 1.0e-8
+force_atol = 1.0e-6
+constraint_rtol = 1.0e-10
+constraint_atol = 1.0e-10
+check_displacement_increment = true
+displacement_rtol = 1.0e-9
+displacement_atol = 1.0e-10
+
+[linear_solver]
+backend = "scipy_splu"
+ordering = "COLAMD"
+singular_policy = "diagnose_and_abort"
+
+[[curves]]
+name = "ramp"
+points = [[0.0, 0.0], [1.0, 1.0]]
+
+[[materials]]
+name = "voce_matrix"
+model = "j2_plasticity"
+[materials.properties]
+shear_modulus = 80193.8
+bulk_modulus = 164210.0
+initial_yield_stress = 450.0
+linear_hardening_modulus = 129.24
+saturation_increment = 265.0
+saturation_rate = 16.93
+
+[[materials]]
+name = "elastic_core"
+model = "neo_hook"
+[materials.properties]
+mu = 80193.8
+kappa = 110747.4666666667
+
+[[element_assignments]]
+region = "matrix"
+formulation = "hex8_fbar"
+material = "voce_matrix"
+
+[[element_assignments]]
+region = "core"
+formulation = "hex8_fbar"
+material = "elastic_core"
+
+[[constraints.periodic_rve]]
+slave_regions = ["xmax", "ymax", "zmax"]
+anchor_region = "anchor"
+macro_deformation = {type = "isochoric_uniaxial", axis = "x", stretch = {constant = 1.0, curve = "ramp", scale = 0.2}}
+
+[output]
+directory = "results/periodic_core_j2_matrix_isochoric_hex8_fbar"
+interval = 0.05
+explicit_times = [0.01, 0.02, 1.0]
+database = "run.h5"
+history_file = "run_log.json"
+
+[restart]
+enabled = true
+interval = 0.25
+explicit_times = [0.5, 1.0]
+keep_last = 3
+restart_from = ""
+
+[verification]
+periodic_average_F = true
+macro_F_tolerance = 1.0e-9

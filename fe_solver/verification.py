@@ -22,6 +22,40 @@ def _derivative_error(analytic: np.ndarray, finite_difference: np.ndarray) -> tu
     return absolute, absolute / scale
 
 
+def _periodic_volume_averages(
+    model: FEModel, gauss_output: list,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Return reference-volume averages needed by periodic RVE checks."""
+    total_volume = 0.0
+    integrated_F = np.zeros((3, 3))
+    region_stress_integrals: dict[str, np.ndarray] = {}
+    region_volumes: dict[str, float] = {}
+    for block, block_output in zip(model.blocks, gauss_output):
+        if block.formulation == "hex20":
+            shape, points, weights = hex20_shape, HEX20_POINTS, HEX20_WEIGHTS
+        else:
+            shape, points, weights = hex8_shape, HEX8_POINTS, HEX8_WEIGHTS
+        stress_integral = np.zeros((3, 3))
+        block_volume = 0.0
+        for connectivity, element_output in zip(block.connectivity, block_output):
+            X = model.mesh.X[connectivity]
+            for point, weight, F, stress in zip(
+                points, weights, element_output.F_raw, element_output.cauchy_stress
+            ):
+                _, dN = shape(point)
+                dv0 = float(np.linalg.det(X.T @ dN) * weight)
+                integrated_F += F * dv0
+                stress_integral += stress * dv0
+                total_volume += dv0
+                block_volume += dv0
+        region_stress_integrals[block.region] = stress_integral
+        region_volumes[block.region] = block_volume
+    return integrated_F / total_volume, {
+        region: value / region_volumes[region]
+        for region, value in region_stress_integrals.items()
+    }
+
+
 def verify_analysis(
     model: FEModel,
     constraints: ConstraintSystem,
@@ -80,39 +114,23 @@ def verify_analysis(
         if affine_error > float(options.get("affine_tolerance", 1.0e-9)):
             raise ModelError("solution fails homogeneous affine-field verification")
 
-    if options.get("heterogeneous_periodic", False):
+    if options.get("periodic_average_F", False) or options.get(
+        "heterogeneous_periodic", False
+    ):
         periodic = model.deck.data.get("constraints", {}).get("periodic_rve", [])
         if len(periodic) != 1:
-            raise ModelError("heterogeneous-periodic verification requires one periodic_rve entry")
+            raise ModelError("periodic-average-F verification requires one periodic_rve entry")
         entry = periodic[0]
         Fbar = macro_deformation_function(entry, model.deck)(t)
-        total_volume = 0.0
-        integrated_F = np.zeros((3, 3))
-        region_stress: dict[str, np.ndarray] = {}
-        for block, block_output in zip(model.blocks, base.gauss_output):
-            if block.formulation == "hex20":
-                shape, points, weights = hex20_shape, HEX20_POINTS, HEX20_WEIGHTS
-            else:
-                shape, points, weights = hex8_shape, HEX8_POINTS, HEX8_WEIGHTS
-            stress_integral = np.zeros((3, 3))
-            block_volume = 0.0
-            for connectivity, gauss_output in zip(block.connectivity, block_output):
-                X = model.mesh.X[connectivity]
-                for point, weight, F, stress in zip(
-                    points, weights, gauss_output.F_raw, gauss_output.cauchy_stress
-                ):
-                    _, dN = shape(point)
-                    dv0 = float(np.linalg.det(X.T @ dN) * weight)
-                    integrated_F += F * dv0
-                    stress_integral += stress * dv0
-                    total_volume += dv0
-                    block_volume += dv0
-            region_stress[block.region] = stress_integral / block_volume
-        average_F = integrated_F / total_volume
+        average_F, region_stress = _periodic_volume_averages(
+            model, base.gauss_output
+        )
         macro_error = _inf((average_F - Fbar).ravel())
         summary["volume_average_F_error_inf"] = macro_error
         if macro_error > float(options.get("macro_F_tolerance", 1.0e-9)):
-            raise ModelError("heterogeneous periodic solution has the wrong volume-average F")
+            raise ModelError("periodic solution has the wrong volume-average F")
+
+    if options.get("heterogeneous_periodic", False):
         anchor = int(model.mesh.node_groups[str(entry["anchor_region"])][0])
         affine = (model.mesh.X - model.mesh.X[anchor]) @ (Fbar - np.eye(3)).T
         nonaffine = _inf(u - affine.ravel())

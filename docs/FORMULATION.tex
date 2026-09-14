@@ -1419,6 +1419,23 @@ The nodal force exerted by the constraints on the displacement system is, with t
 \end{equation}
 Thus the invariant physical constraint-force vector is $\vct f^{\mathrm{con}}=-\vct C^\top\vct\lambda$. Individual multiplier components depend on the chosen scaling and basis of the constraint rows: if one equation is multiplied by a nonzero scalar, its multiplier rescales inversely while $\vct C^\top\vct\lambda$ is unchanged. For periodic constraints, different but equivalent spanning trees likewise produce different multiplier coordinates. Reactions and homogenization diagnostics should therefore be based on assembled nodal constraint forces (or quantities derived from them), not on raw multiplier values alone. For a single retained periodic pair row, the structure of $\vct C^\top\vct\lambda$ produces equal and opposite nodal pair forces.
 
+For a periodic cell with no body force or separately applied nodal load, equilibrium gives
+$\vct f^{\mathrm{int}}=\vct f^{\mathrm{con}}$.  Isoparametric completeness then provides a convenient
+macroscopic nominal-stress diagnostic directly from the nodal constraint reactions:
+\begin{equation}
+\boxed{
+\overline{\P}
+=\frac{1}{|\Omega_0|}\int_{\Omega_0}\P\,\mathrm dV_0
+=\frac{1}{|\Omega_0|}\sum_a \bs f^{\mathrm{con}}_a\otimes\bs X_a .
+}
+\label{eq:periodic-average-P-reaction}
+\end{equation}
+Indeed, $\sum_a \bs f^{\mathrm{int}}_a\otimes\bs X_a$ reduces to the volume integral of $\P$
+because $\sum_a \bs X_a\otimes\Grad N_a=\I$.  Equation~\eqref{eq:periodic-average-P-reaction}
+uses the complete assembled nodal reaction vector, including the anchor reaction; it does not assign physical
+meaning to individual multiplier coordinates.  If body forces or independent nodal loads are present, their
+force moments must be included and this reduced expression cannot be used unchanged.
+
 Because the constraints are linear and are taken to be independent of the unknown displacement within an increment, the Newton Jacobian is
 \begin{equation}
 \boxed{

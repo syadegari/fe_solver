@@ -1242,7 +1242,7 @@ The required schema is logically:
 Block metadata identifies its region, material definition, and formulation; material metadata stores the immutable
 properties used in the run. This permits region/material selection without repeating constant identifiers for every
 cell. Store curves so reported fields can be correlated with prescribed histories. Store nodal constraint reactions as
-`-C.T @ lambda` (the structure-on-constraint sign) because they support equilibrium audits, boundary resultants, and
+`-C.T @ lambda` (the constraint-on-structure sign) because they support equilibrium audits, boundary resultants, and
 later RVE homogenization. Newton residuals,
 tolerances, cutback attempts, and verification summaries belong in the standalone JSON run log, not the field database.
 
@@ -1519,6 +1519,53 @@ For both cases require positive material-point `J`, global equilibrium, periodic
 volume-average `F` equal to the prescribed macro deformation. Also require a resolved nonzero displacement
 fluctuation from the affine field and a nonzero difference between the core and matrix mean stresses. The HDF5 output
 must retain the two blocks/material definitions so these fields can be selected separately in postprocessing.
+
+### 23.4.1 Cases D3/D4: elastic-core, J2-matrix periodic cube
+
+Use the same centered core--matrix geometry at `16 x 16 x 16` resolution, with an `8 x 8 x 8` core.  The mesh
+generator must also support geometrically identical `4/2` and `8/4` element-count pairs; `4/2` is the local
+end-to-end smoke size and `8/4` retains the original two-neo-Hookean regression resolution.  All resolutions must
+preserve the Gmsh translational maps on the three positive faces.
+
+Assign the finite-strain J2/Voce material to the matrix and `neo_hook` to the core.  Use the necking-benchmark J2
+constants
+
+```text
+shear_modulus = 80193.8 MPa
+bulk_modulus = 164210 MPa
+initial_yield_stress = 450 MPa
+linear_hardening_modulus = 129.24 MPa
+saturation_increment = 265 MPa
+saturation_rate = 16.93
+```
+
+and set the neo-Hookean properties to `mu = 80193.8 MPa` and
+`kappa = 164210 - 2*80193.8/3 = 110747.4666666667 MPa`.  This conversion is required because `kappa` in the
+neo-Hookean energy is the coefficient multiplying `(ln J)^2`, whereas the J2 input names the infinitesimal bulk
+modulus.  The two phases consequently have the same infinitesimal elastic tangent at the reference state.  The core
+is the harder phase after matrix yielding because it remains elastic; an arbitrary elastic-modulus contrast is not
+introduced at the same time.
+
+Run the two macroscopic paths from D1/D2: isochoric uniaxial stretch to 1.2 and simple shear to 0.2.  The single new
+case-specific numerical acceptance check is
+
+$$
+\left\|\langle\boldsymbol F_{\rm raw}\rangle_0
+-\overline{\boldsymbol F}\right\|_\infty\le 10^{-9},
+$$
+
+using reference-volume quadrature and the raw kinematic deformation gradient, never the F-bar projected material
+gradient.  Existing solver-wide convergence and admissibility checks remain active but are not duplicated as new
+periodic-composite tests.  One focused infrastructure test must establish that the matrix HDF5 block contains the J2
+state fields while the elastic-core block has an empty state layout, and that both spatial blocks are present in the
+temporal XDMF output.
+
+Postprocessing may derive the macroscopic nominal stress from the nodal-reaction moment identity documented in
+`FORMULATION.tex`, and may form current-volume-weighted core, matrix, and whole-cell averages of the stored
+centroidal Cauchy stress.  These response histories are diagnostics rather than benchmark curves.  In
+particular, inclusion-corner peaks are mesh sensitive and receive no acceptance tolerance.  A broader mesh-convergence
+study is deferred until a multiphase constitutive application requires it.  The full `16/8` solves are deliberately
+excluded from the default local acceptance suite.
 
 ### 23.5 Case E: finite-strain J2 circular-bar necking
 
