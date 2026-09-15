@@ -1262,6 +1262,20 @@ Newton record contains `iteration_wall_seconds`, `assembly_wall_seconds`, `line_
 candidates; when an accepted candidate assembly is reused by the next exact-Newton iteration, that next record marks
 `assembly_reused_from_line_search=true` and reports zero new primary assembly time.
 
+At solver startup, print a compact model-size summary and store the same machine-readable information in the top-level
+`analysis` object of `run_log.json`. Include the analysis/run interval and restart status; node and element counts
+aggregated by element formulation; linear-solution method and backend; and displacement, auxiliary, and total global
+unknown counts. Do not enumerate material definitions or element-assignment blocks in the terminal summary. Applied
+loads, prescribed-constraint right-hand sides, and reactions are physical input/result data rather than measures of
+problem size and do not belong in this startup section; full nodal constraint reactions remain in HDF5.
+
+Once the first global operator has been assembled, report and log its actual sparse storage without performing an
+extra element or tangent pass solely for reporting. For the direct Lagrange-multiplier path, record the shapes and
+stored-entry counts of both `K` and the complete KKT matrix. Pair the KKT stored-entry count with its dense-equivalent
+entry count and storage fraction so sparsity is interpretable. Keep construction and formatting of this report outside
+the nonlinear and factorization routines so alternative global-solution methods can supply their own unknown and
+operator descriptions later.
+
 The optional `--debug-timing` switch additionally records `element_phase_wall_seconds` and
 `sparse_finalize_wall_seconds`. The former starts after element work items have been gathered and includes element
 evaluation/IPC plus ordered parent reduction; the latter covers COO construction, duplicate summation, and CSR

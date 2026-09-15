@@ -20,6 +20,7 @@ from fe_solver.mesh import read_gmsh
 from fe_solver.postprocess import write_xdmf
 from fe_solver.output_fields import TENSOR_COMPONENTS, pack_symmetric, unpack_symmetric
 from fe_solver.quadrature import HEX20_POINTS, HEX8_POINTS
+from fe_solver.reporting import build_analysis_summary
 from fe_solver.shape import hex20_shape, hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
 from fe_solver.types import ModelError, RecoverableError
@@ -362,6 +363,22 @@ class TimeRestartTests(unittest.TestCase):
         model = build_model(deck, mesh)
         formulations = {block.region: block.formulation for block in model.blocks}
         self.assertEqual(formulations, {"matrix": "hex8_fbar", "core": "hex8"})
+        summary = build_analysis_summary(
+            model,
+            analysis_start=0.0,
+            analysis_end=1.0,
+            run_start=0.0,
+            run_target=0.01,
+            restarted=False,
+            solution_method="test",
+            solution_backend="test",
+            unknowns_by_type={"displacement": mesh.ndof},
+        )
+        self.assertEqual(
+            summary["mesh"]["elements_by_formulation"],
+            {"hex8": 8, "hex8_fbar": 56},
+        )
+        self.assertNotIn("material", json.dumps(summary))
         macro = macro_deformation_function(
             data["constraints"]["periodic_rve"][0], deck
         )

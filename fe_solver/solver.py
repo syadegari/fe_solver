@@ -23,6 +23,12 @@ from .constraints import ConstraintSystem
 from .execution import ElementExecutor
 from .io import HDF5ResultWriter, load_restart, write_restart, write_run_log
 from .preprocess import PreparedAnalysis, prepare_analysis
+from .reporting import (
+    build_analysis_summary,
+    print_linear_system_summary,
+    print_startup_summary,
+    record_sparse_system,
+)
 from .types import ModelError, RecoverableError
 
 
@@ -45,6 +51,7 @@ class AnalysisResult:
     increments: list[IncrementRecord] = field(default_factory=list)
     newton_history: list[dict] = field(default_factory=list)
     verification: dict[str, float] = field(default_factory=dict)
+    analysis: dict[str, object] = field(default_factory=dict)
     execution: dict[str, object] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
 
@@ -102,6 +109,7 @@ def _newton_attempt(
     iteration_observer: Callable[[dict, AssemblyResult], None] | None = None,
     element_executor: ElementExecutor | None = None,
     debug_timing: bool = False,
+    linear_system_observer: Callable[[sparse.csr_matrix], None] | None = None,
 ) -> _NewtonResult:
     controls = model.deck.data["nonlinear"]
     method = str(controls.get("method", "newton"))
@@ -218,6 +226,8 @@ def _newton_attempt(
             if refresh:
                 assert assembly.K is not None
                 frozen_K = assembly.K
+                if linear_system_observer is not None:
+                    linear_system_observer(frozen_K)
                 factor_start = perf_counter_ns()
                 factor = _factor_kkt(frozen_K, C, ordering)
                 record["kkt_factorization_wall_seconds"] = (
@@ -359,7 +369,7 @@ def run_analysis(
     num_processes: int = 1,
     debug_timing: bool = False,
 ) -> AnalysisResult:
-    analysis_start = perf_counter_ns()
+    analysis_wall_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
     deck = prepared.deck
     mesh = prepared.mesh
@@ -416,6 +426,24 @@ def run_analysis(
         sum(len(block.connectivity) for block in model.blocks),
         num_processes,
     )
+    analysis_summary = build_analysis_summary(
+        model,
+        analysis_start=t_start,
+        analysis_end=float(analysis["t_end"]),
+        run_start=t_n,
+        run_target=t_end,
+        restarted=bool(restart_from),
+        solution_method="lagrange_multiplier_kkt",
+        solution_backend=str(deck.data["linear_solver"]["backend"]),
+        unknowns_by_type={
+            "displacement": int(mesh.ndof),
+            "multiplier": int(constraints.C.shape[0]),
+        },
+        solution_options={
+            "ordering": str(deck.data["linear_solver"].get("ordering", "COLAMD"))
+        },
+    )
+    print_startup_summary(analysis_summary)
     print(executor.describe())
     result = AnalysisResult(
         model,
@@ -425,8 +453,28 @@ def run_analysis(
         lambda_n,
         increments=prior_increments,
         newton_history=prior_newton,
+        analysis=analysis_summary,
         execution=executor.info.as_dict(),
     )
+
+    def observe_linear_system(K: sparse.csr_matrix) -> None:
+        linear = result.analysis["linear_system"]
+        if "matrices" in linear:
+            return
+        stiffness_entries = int(K.nnz)
+        kkt_entries = stiffness_entries + 2 * int(constraints.C.nnz)
+        kkt_order = int(K.shape[0] + constraints.C.shape[0])
+        record_sparse_system(
+            result.analysis,
+            primary_name="K",
+            primary_shape=K.shape,
+            primary_stored_entries=stiffness_entries,
+            system_name="KKT",
+            system_shape=(kkt_order, kkt_order),
+            system_stored_entries=kkt_entries,
+        )
+        print_linear_system_summary(result.analysis)
+
     writer: HDF5ResultWriter | None = None
     try:
         writer = HDF5ResultWriter(
@@ -436,7 +484,7 @@ def run_analysis(
             resume_time=t_n if resuming_existing_database else None,
         )
         result.timing["elapsed_wall_seconds"] = (
-            elapsed_before_restart + (perf_counter_ns() - analysis_start) * 1.0e-9
+            elapsed_before_restart + (perf_counter_ns() - analysis_wall_start) * 1.0e-9
         )
         write_run_log(
             log_path,
@@ -445,6 +493,7 @@ def run_analysis(
             result.verification,
             result.execution,
             result.timing,
+            result.analysis,
         )
         initial_assembly = assemble_internal(
             model,
@@ -485,6 +534,7 @@ def run_analysis(
                         result.newton_history,
                         element_executor=executor,
                         debug_timing=debug_timing,
+                        linear_system_observer=observe_linear_system,
                     )
                 except RecoverableError:
                     cutbacks += 1
@@ -517,7 +567,7 @@ def run_analysis(
                             obsolete.unlink()
                 result.timing["elapsed_wall_seconds"] = (
                     elapsed_before_restart
-                    + (perf_counter_ns() - analysis_start) * 1.0e-9
+                    + (perf_counter_ns() - analysis_wall_start) * 1.0e-9
                 )
                 write_run_log(
                     log_path,
@@ -526,6 +576,7 @@ def run_analysis(
                     result.verification,
                     result.execution,
                     result.timing,
+                    result.analysis,
                 )
                 break
         from .verification import verify_analysis
@@ -538,7 +589,7 @@ def run_analysis(
             element_executor=executor,
         )
         result.timing["elapsed_wall_seconds"] = (
-            elapsed_before_restart + (perf_counter_ns() - analysis_start) * 1.0e-9
+            elapsed_before_restart + (perf_counter_ns() - analysis_wall_start) * 1.0e-9
         )
         write_run_log(
             log_path,
@@ -547,6 +598,7 @@ def run_analysis(
             result.verification,
             result.execution,
             result.timing,
+            result.analysis,
         )
         return result
     finally:

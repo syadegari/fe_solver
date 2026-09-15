@@ -190,12 +190,14 @@ class ElementProcessAssemblyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="fe-parallel-test-") as directory:
             root = Path(directory)
             results = []
+            terminal_outputs = []
             for name, processes in (("serial", 1), ("process", 2)):
                 data = copy.deepcopy(original.data)
                 data["output"]["directory"] = str(root / name)
                 data["restart"]["enabled"] = False
                 deck = Deck(original.path, data, original.curves)
-                with redirect_stdout(StringIO()):
+                terminal = StringIO()
+                with redirect_stdout(terminal):
                     results.append(
                         run_analysis(
                             deck,
@@ -204,6 +206,7 @@ class ElementProcessAssemblyTests(unittest.TestCase):
                             debug_timing=True,
                         )
                     )
+                terminal_outputs.append(terminal.getvalue())
 
             serial, process = results
             np.testing.assert_allclose(process.u, serial.u, rtol=2.0e-14, atol=2.0e-14)
@@ -229,7 +232,40 @@ class ElementProcessAssemblyTests(unittest.TestCase):
             with (root / "process/run_log.json").open(encoding="utf-8") as stream:
                 log = json.load(stream)
             self.assertEqual(log["schema_version"], 2)
+            self.assertEqual(log["analysis"], process.analysis)
             self.assertEqual(log["execution"], process.execution)
+            analysis = log["analysis"]
+            self.assertEqual(analysis["mesh"]["nodes"], len(process.model.mesh.X))
+            self.assertEqual(
+                analysis["mesh"]["elements"],
+                sum(len(block.connectivity) for block in process.model.blocks),
+            )
+            self.assertEqual(
+                analysis["linear_system"]["unknowns"]["total"],
+                process.model.mesh.ndof + process.constraints.C.shape[0],
+            )
+            matrices = analysis["linear_system"]["matrices"]
+            self.assertGreater(
+                matrices["primary"]["stored_entries"], 0
+            )
+            self.assertEqual(
+                matrices["system"]["stored_entries"],
+                matrices["primary"]["stored_entries"]
+                + 2 * process.constraints.C.nnz,
+            )
+            self.assertEqual(
+                matrices["system"]["dense_entry_count"],
+                analysis["linear_system"]["unknowns"]["total"] ** 2,
+            )
+            self.assertGreater(
+                matrices["system"]["storage_fraction"],
+                0.0,
+            )
+            self.assertIn("analysis: case_a_hex8", terminal_outputs[1])
+            self.assertIn("model: 81 nodes, 32 elements (hex8=32)", terminal_outputs[1])
+            self.assertIn("linear system: scipy_splu KKT", terminal_outputs[1])
+            self.assertNotIn("external force", terminal_outputs[1])
+            self.assertNotIn("material=", terminal_outputs[1])
             self.assertGreater(log["timing"]["elapsed_wall_seconds"], 0.0)
             self.assertTrue(log["newton_history"])
             for record in log["newton_history"]:

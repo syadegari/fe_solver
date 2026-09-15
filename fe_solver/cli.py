@@ -44,9 +44,12 @@ def main(argv: list[str] | None = None) -> None:
         )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")
+    reaction = -result.constraints.C.T @ result.lambdas
+    maximum_reaction = float(abs(reaction).max()) if reaction.size else 0.0
     print(
         f"converged {len(result.increments)} increments to t={result.t:.12g}; "
         f"max|u|={abs(result.u).max():.6g}; "
+        f"max|reaction|={maximum_reaction:.6g}; "
         f"force balance={result.verification['force_balance_inf']:.3e}"
     )
 

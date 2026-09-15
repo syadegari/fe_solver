@@ -373,10 +373,12 @@ def write_run_log(
     verification: dict,
     execution: dict[str, object] | None = None,
     timing: dict[str, float] | None = None,
+    analysis: dict[str, object] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": 2,
+        "analysis": analysis or {},
         "execution": execution or {},
         "timing": timing or {},
         "increments": [asdict(item) for item in increments],

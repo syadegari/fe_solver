@@ -66,6 +66,12 @@ physical/logical CPUs. The solver never chooses all CPUs automatically, and each
 thread. For CPU-bound element kernels, physical-core count is the conservative starting point; benchmark before using
 additional hardware threads. Add `--debug-timing` when detailed element-phase and sparse-finalization timings are needed.
 
+The startup summary also reports node and element counts, element-formulation totals, and the selected global-solution
+path. After the first real tangent assembly, it reports displacement/multiplier unknowns and the stored sparse entries
+in `K` and the complete KKT matrix, including the KKT fill percentage relative to dense storage. The same structured
+data is retained under `analysis` in `run_log.json`. Load and reaction fields remain separate from this model-size
+summary; full nodal constraint reactions are stored in `run.h5`.
+
 Compare two completed HDF5 runs, including all numerical result fields and metadata, with:
 
 ```bash
