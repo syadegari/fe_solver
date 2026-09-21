@@ -1,14 +1,3 @@
-# TODO: Testing should not test the result of factoring on its own. 
-#       Currently we have:
-#       residual = np.linalg.norm(A @ x - b, ord=np.inf)
-#
-#       but what we wanna test is how close we are to the single-thread scipy solution.
-#       Schematically, we should have
-#         solve_mt(A, b) -> x_mt
-#         solve_scipy(A, b) -> x_scipy
-#         assert np.close(x_mt, x_scipy)
-#
-
 from __future__ import annotations
 
 import ctypes
@@ -36,63 +25,99 @@ class SuperLUMTConfig(ctypes.Structure):
 
 
 _C_INT = ctypes.c_int
-_C_INT_P = ctypes.POINTER(ctypes.c_int)    
-_C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)    
+_C_INT_P = ctypes.POINTER(ctypes.c_int)
+_C_DOUBLE_P = ctypes.POINTER(ctypes.c_double)
 
-
-_FLOAT64_ARRAY_p = np.ctypeslib.ndpointer(
+_FLOAT64_ARRAY_P = np.ctypeslib.ndpointer(
     dtype=np.float64,
     ndim=1,
     flags="C_CONTIGUOUS",
 )
 
-_INT32_ARRAY_p = np.ctypeslib.ndpointer(
+_INT32_ARRAY_P = np.ctypeslib.ndpointer(
     dtype=np.int32,
     ndim=1,
     flags="C_CONTIGUOUS",
 )
 
 
-def load_superlu_mt(path: str | Path):
+def load_superlu_mt(path: str | Path) -> ctypes.CDLL:
+    """Load the native SuperLU_MT bridge and declare its ctypes ABI."""
     lib = ctypes.CDLL(str(Path(path)))
 
-    # The signatures
     lib.slumt_factor.argtypes = [
-        _C_INT,                       # nprocs
-        _C_INT,                       # n
-        _C_INT,                       # nnz
-        _FLOAT64_ARRAY_p,                   # data
-        _INT32_ARRAY_p,                     # indices
-        _INT32_ARRAY_p,                     # indptr
-        ctypes.POINTER(SuperLUMTConfig),    # config
-        _C_DOUBLE_P,    # setup_seconds
-        _C_DOUBLE_P,    # factor_seconds
-        _C_INT_P,       # info_out
+        _C_INT,                              # nprocs
+        _C_INT,                              # n
+        _C_INT,                              # nnz
+        _FLOAT64_ARRAY_P,                    # data
+        _INT32_ARRAY_P,                      # indices
+        _INT32_ARRAY_P,                      # indptr
+        ctypes.POINTER(SuperLUMTConfig),     # config
+        _C_DOUBLE_P,                         # setup_seconds
+        _C_DOUBLE_P,                         # factor_seconds
+        _C_INT_P,                            # info_out
     ]
     lib.slumt_factor.restype = ctypes.c_void_p
 
     lib.slumt_solve.argtypes = [
         ctypes.c_void_p,
-        _FLOAT64_ARRAY_p,
-        _FLOAT64_ARRAY_p,
+        _FLOAT64_ARRAY_P,
+        _FLOAT64_ARRAY_P,
         _C_INT,
         _C_DOUBLE_P,
     ]
     lib.slumt_solve.restype = ctypes.c_int
 
-    lib.slumt_free.argtypes = [
-        ctypes.c_void_p,
-    ]
+    lib.slumt_free.argtypes = [ctypes.c_void_p]
     lib.slumt_free.restype = None
 
     return lib
 
 
+def _validate_csc(A: sparse.spmatrix) -> None:
+    """Validate the native bridge input contract without converting the matrix."""
+    if not sparse.issparse(A) or A.format != "csc":
+        raise TypeError("SuperLU_MT backend requires a CSC sparse matrix")
+
+    if A.shape[0] != A.shape[1]:
+        raise ValueError(f"SuperLU_MT requires a square matrix, got shape {A.shape}")
+
+    # In the FE solver, K and C are formed through COO -> CSR conversion and
+    # the KKT matrix is then built with sparse.bmat(..., format="csc"). Those
+    # construction paths produce canonical compressed matrices (sorted indices,
+    # no duplicate entries), so no canonicalization belongs in this bridge.
+    # Keep the check because this wrapper can also be called independently and
+    # raw CSR/CSC constructors can produce non-canonical matrices.
+    if not A.has_canonical_format:
+        raise ValueError(
+            "SuperLU_MT backend requires canonical CSC "
+            "(sorted indices and no duplicate entries)"
+        )
+
+    int32_max = np.iinfo(np.int32).max
+    if A.shape[0] > int32_max or A.nnz > int32_max:
+        raise OverflowError("matrix is too large for this 32-bit SuperLU_MT build")
+
+    if A.data.dtype != np.float64:
+        raise TypeError(f"matrix data must have dtype float64, got {A.data.dtype}")
+    if A.indices.dtype != np.int32:
+        raise TypeError(f"matrix indices must have dtype int32, got {A.indices.dtype}")
+    if A.indptr.dtype != np.int32:
+        raise TypeError(f"matrix indptr must have dtype int32, got {A.indptr.dtype}")
+
+    if not A.data.flags.c_contiguous:
+        raise ValueError("matrix data must be C-contiguous")
+    if not A.indices.flags.c_contiguous:
+        raise ValueError("matrix indices must be C-contiguous")
+    if not A.indptr.flags.c_contiguous:
+        raise ValueError("matrix indptr must be C-contiguous")
+
+
 class SuperLUMTFactor:
     def __init__(
         self,
-        lib,
-        handle,
+        lib: ctypes.CDLL,
+        handle: int,
         n: int,
         setup_seconds: float,
         factor_seconds: float,
@@ -107,7 +132,7 @@ class SuperLUMTFactor:
     @classmethod
     def factor(
         cls,
-        lib,
+        lib: ctypes.CDLL,
         A: sparse.spmatrix,
         *,
         nprocs: int,
@@ -116,56 +141,20 @@ class SuperLUMTFactor:
         panel_size: int = -1,
         relax: int = -1,
     ) -> "SuperLUMTFactor":
-        if ordering not in ORDERINGS:
-            raise ValueError(
-                f"unsupported SuperLU_MT ordering {ordering!r}"
-            )
+        """Factor a canonical float64/int32 CSC matrix without converting it."""
+        _validate_csc(A)
 
-        if not sparse.issparse(A) or A.format != "csc":
-            raise TypeError(
-                "SuperLU_MT backend requires a CSC sparse matrix"
-            )
-
-        if not A.has_canonical_format:
-            raise ValueError(
-                "SuperLU_MT backend requires canonical CSC "
-                "(sorted indices and no duplicate entries)"
-            )
-
-        if A.shape[0] != A.shape[1]:
-            raise ValueError("SuperLU_MT requires a square matrix")
-
-        int32_max = np.iinfo(np.int32).max
-        if A.shape[0] > int32_max or A.nnz > int32_max:
-            raise OverflowError(
-                "matrix is too large for this 32-bit SuperLU_MT build"
-            )
-        # Work on our own canonical CSC representation.
-        # TODO change of format should be outside of the bridge and solve take care of it. 
-        #      the backend resposibility is matrix -> factor obj -> solve
-        #
-        # for example, in solver.py we manage it like this
-        # def _factor_kkt(K: sparse.csr_matrix, C: sparse.csr_matrix, ordering: str):
-        #     zero = sparse.csr_matrix((C.shape[0], C.shape[0]))
-        #     kkt = sparse.bmat([[K, C.T], [C, zero]], format="csc")
-        #     try:
-        #         with warnings.catch_warnings():
-        #             warnings.simplefilter("error", MatrixRankWarning)
-        #             return splu(kkt, permc_spec=ordering)
-        #     except (RuntimeError, MatrixRankWarning) as exc:
-        #         raise ModelError("singular sparse KKT system; check constraints and rigid modes") from exc
-        A = A.tocsc(copy=True)
-        # TODO what are the purpose of these two lines. If they are needed to stay, time them in debug mode
-        #      and later decide wether to keep them or discard them
-        A.sum_duplicates()
-        A.sort_indices()
-
-        A.data = np.ascontiguousarray(A.data, dtype=np.float64)
-        A.indices = np.ascontiguousarray(A.indices, dtype=np.int32)
-        A.indptr = np.ascontiguousarray(A.indptr, dtype=np.int32)
+        # Ordering is expressed as a Python string, so mapping it to the C enum
+        # is a Python-side responsibility. Native numeric option validation is
+        # intentionally left to slumt_factor(), which is the authority for its
+        # own API contract.
+        try:
+            permc_spec = ORDERINGS[ordering]
+        except KeyError as exc:
+            raise ValueError(f"unsupported SuperLU_MT ordering {ordering!r}") from exc
 
         config = SuperLUMTConfig(
-            permc_spec=ORDERINGS[ordering],
+            permc_spec=permc_spec,
             diag_pivot_thresh=diag_pivot_thresh,
             panel_size=panel_size,
             relax=relax,
@@ -208,21 +197,20 @@ class SuperLUMTFactor:
         )
 
     def solve(self, b: np.ndarray) -> np.ndarray:
+        """Solve for one float64, C-contiguous RHS vector without converting it."""
         if self._handle is None:
             raise RuntimeError("SuperLU_MT factor has been closed")
 
-        b = np.asarray(b, dtype=np.float64)
-
-        # For now deliberately support one RHS only. Multiple RHS requires
-        # respecting SuperLU's column-major dense-matrix layout.
+        if not isinstance(b, np.ndarray):
+            raise TypeError("RHS must be a NumPy array")
         if b.ndim != 1 or b.shape[0] != self.n:
-            raise ValueError(
-                f"expected RHS with shape ({self.n},), got {b.shape}"
-            )
+            raise ValueError(f"expected RHS with shape ({self.n},), got {b.shape}")
+        if b.dtype != np.float64:
+            raise TypeError(f"RHS must have dtype float64, got {b.dtype}")
+        if not b.flags.c_contiguous:
+            raise ValueError("RHS must be C-contiguous")
 
-        b = np.ascontiguousarray(b)
         x = np.empty(self.n, dtype=np.float64)
-
         solve_seconds = ctypes.c_double()
 
         info = self._lib.slumt_solve(
@@ -234,9 +222,7 @@ class SuperLUMTFactor:
         )
 
         if info != 0:
-            raise RuntimeError(
-                f"SuperLU_MT dgstrs failed with info={info}"
-            )
+            raise RuntimeError(f"SuperLU_MT dgstrs failed with info={info}")
 
         self.solve_seconds = solve_seconds.value
         return x
@@ -251,3 +237,9 @@ class SuperLUMTFactor:
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
