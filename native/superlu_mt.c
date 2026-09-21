@@ -11,6 +11,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 
 typedef struct {
@@ -34,6 +35,14 @@ typedef struct {
 } slumt_handle;
 
 
+typedef struct {
+    int permc_spec;
+    double diag_pivot_thresh;
+    int panel_size;
+    int relax;
+} slumt_factor_config;
+
+
 /*
  * Returns an opaque factorization handle.
  *
@@ -51,12 +60,54 @@ slumt_factor(
     const double *data,
     const int_t *indices,
     const int_t *indptr,
-    int permc_spec,
+    const slumt_factor_config *config,
     double *setup_seconds,
     double *factor_seconds,
     int *info_out
 )
 {
+    if (!config)
+    {
+        *info_out = -997;
+        return NULL;
+    }
+
+    if (nprocs < 1 ||
+        config->permc_spec < 0 ||
+        config->permc_spec > 3 ||
+        !isfinite(config->diag_pivot_thresh) ||
+        config->diag_pivot_thresh < 0.0 ||
+        config->diag_pivot_thresh > 1.0 ||
+        config->panel_size == 0 ||
+        config->panel_size < -1 ||
+        config->relax < -1)
+    {
+        *info_out = -997;
+        return NULL;
+    }
+
+    /*
+    * sp_ienv current mapping in 4.0.2:
+    *   1 = panel_size
+    *   2 = relax
+    *   3 = max_supernode_size
+    *   4 = min_row_dim_for_2D_blocking
+    *   5 = min_col_dim_for_2D_blocking
+    *   6 = LUSUP_storage
+    *   7 = UCOL/USUB_storage
+    *   8 = LSUB_storage
+    */
+
+    /* TODO: Describe permc_spec optoins */
+
+    int_t panel_size = config->panel_size == -1 
+    ? sp_ienv(1) 
+    : (int_t)config->panel_size;
+
+    int_t relax = config->relax == -1 
+    ? sp_ienv(2) 
+    : (int_t)config->relax;
+
     slumt_handle *h = calloc(1, sizeof(*h));
 
     if (!h) {
@@ -96,9 +147,15 @@ slumt_factor(
         SLU_GE
     );
 
-    int_t panel_size = sp_ienv(1);
-    int_t relax = sp_ienv(2);
 
+
+    /*
+    * TODO(symbolic-reuse):
+    * Keep refact=NO and usepr=NO until the FE backend explicitly owns
+    * and validates symbolic-factorization reuse. Reuse is only valid
+    * while the sparsity pattern and the required permutation/symbolic
+    * state remain compatible.
+    */
     StatAlloc(
         (int_t)n,
         (int_t)nprocs,
@@ -117,21 +174,21 @@ slumt_factor(
     double t0 = SuperLU_timer_();
 
     get_perm_c(
-        (int_t)permc_spec,
+        (int_t)config->permc_spec,
         &h->A,
         h->perm_c
     );
 
     pdgstrf_init(
         (int_t)nprocs,
-        EQUILIBRATE,
+        DOFACT,
         NOTRANS,
-        NO,
+        NO,             /* refact */
         panel_size,
         relax,
-        1.0,
-        NO,
-        0.0,
+        config->diag_pivot_thresh,
+        NO,             /* usepr */
+        0.0,            /* drop_tol: unused */
         h->perm_c,
         h->perm_r,
         NULL,
