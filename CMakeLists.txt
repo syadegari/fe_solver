@@ -48,7 +48,7 @@ FetchContent_Declare(
         https://github.com/syadegari/superlu_mt.git
 
     GIT_TAG
-        CMake-Support-for-CBLAS
+        fe-integration
 
     GIT_SHALLOW TRUE
 )
