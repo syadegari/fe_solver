@@ -27,6 +27,19 @@ def main(argv: list[str] | None = None) -> None:
         "--debug-timing", action="store_true",
         help="record detailed element, sparse-finalization, and line-search timings",
     )
+    solve.add_argument(
+        "--solver-backend",
+        choices= ("splu", "superlu_mt"),
+        default="splu",
+        help="select backend for the global solver (default: splu)",
+    )
+    solve.add_argument(
+        "--num-threads",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"number of threads used for superlu_mt backend solver",
+    )
     post = commands.add_parser("postprocess", help="create temporal XDMF from a run database")
     post.add_argument("database", type=Path, help="path to run.h5")
     post.add_argument("--output", type=Path, default=None, help="output .xdmf path")
@@ -41,11 +54,20 @@ def main(argv: list[str] | None = None) -> None:
             stop_time=args.stop_time,
             num_processes=args.num_processes,
             debug_timing=args.debug_timing,
+            solver_backend=args.solver_backend
         )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")
+    # TODO: why is the reaction and maximum_reaction in the cli module? 
+    #       Get this outside of the cli even if 
+    #       if it means it lives in a separate module in a one-liner function
+    #       this should be only acted upon after merging feature/superlu_mu into main
     reaction = -result.constraints.C.T @ result.lambdas
     maximum_reaction = float(abs(reaction).max()) if reaction.size else 0.0
+    # TODO: Better yet to break and separate cli into a separate cli.py and 
+    #       keep the high-level run (anything from try block all the way to 
+    #       the end where we print the results)
+    #       this should be only acted upon after merging feature/superlu_mu into main
     print(
         f"converged {len(result.increments)} increments to t={result.t:.12g}; "
         f"max|u|={abs(result.u).max():.6g}; "
