@@ -1,11 +1,13 @@
-// TODO: Harden the current
+// TODO: 
 /*
- - clean partial-allocation failures correctly;
- - make cleanup safe/idempotent;
- - add the 32-bit int_t compile-time check;
- - define consistent error codes;
- - remove incidental printing from normal operation.
- */
+  - Add diagnostics after successful pdgstrf():
+     collect the followings:
+       - Actual nnz(L), nnz(U)
+       - Factorization flop from Gstat_t
+       - Various storages from QuerySpace and other routines in pdmemory.c
+    These could be useful diagnostics if we wanna tackle the fixed sizes
+    of U and L and memory errors they generate for large meshes
+*/
 
 #include "slu_mt_ddefs.h"
 
@@ -297,7 +299,20 @@ slumt_free(void *handle)
     if (!h) return;
 
     if (h->initialized) pxgstrf_finalize(&h->options, &h->AC);
-
+    //
+    // TODO: Optional improvement
+    /*
+        Since h is initialized using calloc, use the following to free L and U 
+        instead of relying on `factor_called`
+        if (h->L.Store) {
+            Destroy_SuperNodeSCP(&h->L);
+            h->L.Store = NULL;
+        }
+        if (h->U.Store) {
+            Destroy_SuperNodeSCP(&h->U);
+            h->U.Store = NULL;
+        }
+    */
     if (h->factor_called) {
         Destroy_SuperNode_SCP(&h->L);
         Destroy_CompCol_NCP(&h->U);
