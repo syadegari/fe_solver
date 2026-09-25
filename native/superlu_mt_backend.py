@@ -76,6 +76,9 @@ def load_superlu_mt(path: str | Path) -> ctypes.CDLL:
 
 def _validate_csc(A: sparse.spmatrix) -> None:
     """Validate the native bridge input contract without converting the matrix."""
+    # TODO: Review this function. When we call scipy.splu, we don't do any
+    #       of the validations in this function. Why should be doing the validation
+    #        just because we choose superlu_mt over the former?
     if not sparse.issparse(A) or A.format != "csc":
         raise TypeError("SuperLU_MT backend requires a CSC sparse matrix")
 
