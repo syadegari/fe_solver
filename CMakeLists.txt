@@ -8,7 +8,6 @@ include(FetchContent)
 # These are cache variables because SuperLU_MT reads them from its own
 # CMakeLists.txt when FetchContent_MakeAvailable() adds it as a subproject.
 # ---------------------------------------------------------------------------
-
 set(THREAD_API PTHREAD CACHE STRING "" FORCE)
 
 # Still needed by the current SuperLU_MT EXAMPLE/CMakeLists.txt, even though
@@ -33,27 +32,20 @@ set(LONGINT OFF CACHE BOOL "" FORCE)
 #   1. discover an installed BLAS automatically;
 #   2. fall back to its bundled CBLAS if none is found.
 #
-# Your fork now provides CBLAS/CMakeLists.txt, so both paths should work.
-
 
 # ---------------------------------------------------------------------------
-# TODO: Change that if PR is accepted
-# Fetch forked SuperLU_MT for now. 
+# TODO: Change that if the two PRs is accepted.
+#       For now fetch forked SuperLU_MT for now. 
 # ---------------------------------------------------------------------------
-
 FetchContent_Declare(
     superlu_mt
-
     GIT_REPOSITORY
         https://github.com/syadegari/superlu_mt.git
-
     GIT_TAG
         fe-integration
-
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(superlu_mt)
-
 
 # ---------------------------------------------------------------------------
 # Build our bridge.
@@ -62,27 +54,22 @@ FetchContent_MakeAvailable(superlu_mt)
 # similarly named target that might exist in the SuperLU_MT repository.
 # The produced file is still called libsuperlu_mt_bridge.so.
 # ---------------------------------------------------------------------------
-
-include (CTest)
-
+include(CTest)
 add_library(
     project_superlu_mt_bridge
     SHARED
     native/superlu_mt.c
 )
-
 target_include_directories(
     project_superlu_mt_bridge
     PRIVATE
         ${superlu_mt_SOURCE_DIR}/SRC
 )
-
 target_link_libraries(
     project_superlu_mt_bridge
     PRIVATE
         superlu_mt_PTHREAD
 )
-
 set_target_properties(
     project_superlu_mt_bridge
     PROPERTIES
