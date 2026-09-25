@@ -31,6 +31,20 @@ from .reporting import (
 )
 from .types import ModelError, RecoverableError
 
+from contextlib import contextmanager
+from collections.abc import MutableMapping
+from typing import Generator
+
+
+@contextmanager
+def timer(registry: MutableMapping[str, float], key: str) -> Generator:
+    start = perf_counter_ns()
+    try:
+        yield
+    finally:
+        registry[key] = (perf_counter_ns() - start) * 1e-9
+
+
 
 @dataclass
 class IncrementRecord:
