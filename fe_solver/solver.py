@@ -44,6 +44,18 @@ def timer(registry: MutableMapping[str, float], key: str) -> Generator:
     finally:
         registry[key] = (perf_counter_ns() - start) * 1e-9
 
+SOLVER_BACKEND = 'superlu_mt'
+NPROC = 16
+
+from native.superlu_mt_backend import SuperLUMTFactor, load_superlu_mt
+SUPERLU_MT_LIB = (
+    Path(__file__).resolve().parent.parent
+    / "build"
+    / "native"
+    / "libsuperlu_mt_bridge.so"
+)
+if SOLVER_BACKEND == 'superlu_mt':
+    lib = load_superlu_mt(SUPERLU_MT_LIB)
 
 
 @dataclass
@@ -102,12 +114,15 @@ def _scaled_residual_merit(
 
 
 def _factor_kkt(K: sparse.csr_matrix, C: sparse.csr_matrix, ordering: str):
-    zero = sparse.csr_matrix((C.shape[0], C.shape[0]))
+    zero = sparse.csr_matrix((C.shape[0], C.shape[0]), dtype=C.dtype)
     kkt = sparse.bmat([[K, C.T], [C, zero]], format="csc")
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)
-            return splu(kkt, permc_spec=ordering)
+            if SOLVER_BACKEND == 'splu':
+                return splu(kkt, permc_spec=ordering)
+            if SOLVER_BACKEND == 'superlu_mt':
+                return SuperLUMTFactor.factor(lib, kkt, nprocs=NPROC)
     except (RuntimeError, MatrixRankWarning) as exc:
         raise ModelError("singular sparse KKT system; check constraints and rigid modes") from exc
 
@@ -238,6 +253,13 @@ def _newton_attempt(
             if iteration == max_iterations:
                 break
             if refresh:
+                if factor and SOLVER_BACKEND == 'superlu_mt':
+                    # factor handle exists, and so does the underlying matrices it points
+                    # to in memory. If we don't release that, we end up double allocating
+                    # (roughly speaking, depending on branch of algo it could be the same
+                    #  or different matrix, but the main point is to release any previously 
+                    #  unreleased handle that can keep memory)
+                    factor.close()
                 assert assembly.K is not None
                 frozen_K = assembly.K
                 if linear_system_observer is not None:
@@ -382,6 +404,7 @@ def run_analysis(
     stop_time: float | None = None,
     num_processes: int = 1,
     debug_timing: bool = False,
+    solver_backend
 ) -> AnalysisResult:
     analysis_wall_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
