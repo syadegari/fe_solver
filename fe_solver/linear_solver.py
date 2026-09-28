@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 import warnings
 
@@ -44,7 +44,7 @@ class LinearSolverConfig:
             raise ModelError("--num-threads is valid only with superlu_mt")
 
 
-@lru_cache(maxsize=1)
+@cache
 def _load_superlu_mt():
     # Keep the optional native dependency out of the ordinary SciPy import path.
     from native.superlu_mt_backend import load_superlu_mt
