@@ -1,0 +1,27 @@
+{
+  "reference": "examples/results/periodic_core_j2_matrix_shear_hex8_fbar_newton_splu/run.h5",
+  "candidate": "examples/results/periodic_core_j2_matrix_shear_hex8_fbar_newton_superlu_mt/run.h5",
+  "passed": true,
+  "exact_numeric_datasets": 9,
+  "tolerance_numeric_datasets": 10,
+  "worst_absolute": {
+    "path": "results/blocks/0000/cauchy_stress",
+    "exact": false,
+    "max_absolute": 7.507239274673339e-10,
+    "max_relative": 1.3432768324989837e-06
+  },
+  "worst_relative": {
+    "path": "results/nodal/constraint_reaction",
+    "exact": false,
+    "max_absolute": 2.162473759087513e-12,
+    "max_relative": 1.9999180021419045
+  },
+  "structural_errors": [],
+  "normalized_datasets": [
+    "meta/input_segments_json:git_commit,resolved_input.output.directory",
+    "meta/resolved_input_json:output.directory"
+  ],
+  "ignored_attributes": [
+    "/:git_commit"
+  ]
+}
