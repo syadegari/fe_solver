@@ -86,7 +86,7 @@ def factor_kkt(
                 )
     except (RuntimeError, MatrixRankWarning) as exc:
         raise ModelError(
-            "singular sparse KKT system; check constraints and rigid modes"
+            f"singular sparse KKT system or installation failure; check constraints, rigid modes or installation path: {exc}"
         ) from exc
 
 
