@@ -71,3 +71,27 @@ The 48-test unit suite and the default eight-deck acceptance suite pass after th
 decks complete without cutbacks.  Timing telemetry from the production runs attributes approximately 92.5 percent of
 wall time to sparse KKT factorization and approximately 6.4 percent to all element phases, identifying the global
 linear solver rather than element processing as the dominant performance limit for these cases.
+
+## SuperLU_MT selectable-backend validation (2026-09-28)
+
+Four `8 x 8 x 8` periodic elastic-core/J2-matrix simple-shear runs compared exact and modified Newton with the
+`scipy_splu` and 16-thread `superlu_mt` KKT backends.  Both backend pairs have identical accepted-time arrays and pass
+the complete HDF5 comparison at `rtol = atol = 1e-8`; maximum absolute Cauchy-stress differences are below
+`7.51e-10 MPa`.  Exact Newton completed through `t=1` with identical increment histories and no cutbacks.  The
+integration source used for the remote runs is represented by commit
+`74b5880eaa72770435c6a9e0a9d8a926d292a095`; the databases retain the preceding revision because the integration was
+uncommitted when the unchanged source tree was archived.
+
+Timing is secondary in this comparison.  On this small `2,841 x 2,841` KKT system, the exact-Newton run observed
+`4.522x` lower summed factorization time and `1.703x` lower total wall time with SuperLU_MT.  These are case-specific
+diagnostics, not general speedup claims.  A separate `16 x 16 x 16` observation gave approximately 25--27 seconds per
+SciPy factorization versus 3.4 seconds for 16-thread SuperLU_MT, but it was not part of this controlled study or a
+cross-size scaling experiment.  Performance depends on system size and sparsity, ordering, BLAS, hardware, thread
+count, and how frequently the nonlinear method refactorizes.
+
+Both modified-Newton runs followed the same cutback path and terminated at `t=0.01619870625436306` when continuation
+would require `dt < 1e-6`.  Their converged prefixes also pass the backend comparison.  The logs indicate slow linear
+residual reduction with the frozen tangent rather than a backend-dependent failure.  The endpoint coincides with
+matrix yield: `P12 = 259.803 MPa` versus `450/sqrt(3) = 259.808 MPa`.  Investigation is deferred to the planned
+nonlinear-solver audit.  The reproducibility record and machine-readable comparison summaries are in
+`verification/superlu_mt_results/`.

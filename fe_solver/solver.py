@@ -5,11 +5,9 @@ import json
 from pathlib import Path
 from time import perf_counter_ns
 from typing import Callable
-import warnings
 
 import numpy as np
 from scipy import sparse
-from scipy.sparse.linalg import MatrixRankWarning, splu
 
 from .assembly import (
     AssemblyResult,
@@ -22,6 +20,12 @@ from .config import Deck
 from .constraints import ConstraintSystem
 from .execution import ElementExecutor
 from .io import HDF5ResultWriter, load_restart, write_restart, write_run_log
+from .linear_solver import (
+    LinearSolverConfig,
+    close_factor,
+    factor_kkt as _factor_kkt,
+    solve_factor,
+)
 from .preprocess import PreparedAnalysis, prepare_analysis
 from .reporting import (
     build_analysis_summary,
@@ -30,6 +34,19 @@ from .reporting import (
     record_sparse_system,
 )
 from .types import ModelError, RecoverableError
+
+from contextlib import contextmanager
+from collections.abc import MutableMapping
+from typing import Generator
+
+
+@contextmanager
+def timer(registry: MutableMapping[str, float], key: str) -> Generator:
+    start = perf_counter_ns()
+    try:
+        yield
+    finally:
+        registry[key] = (perf_counter_ns() - start) * 1e-9
 
 
 @dataclass
@@ -87,17 +104,6 @@ def _scaled_residual_merit(
     )
 
 
-def _factor_kkt(K: sparse.csr_matrix, C: sparse.csr_matrix, ordering: str):
-    zero = sparse.csr_matrix((C.shape[0], C.shape[0]))
-    kkt = sparse.bmat([[K, C.T], [C, zero]], format="csc")
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", MatrixRankWarning)
-            return splu(kkt, permc_spec=ordering)
-    except (RuntimeError, MatrixRankWarning) as exc:
-        raise ModelError("singular sparse KKT system; check constraints and rigid modes") from exc
-
-
 def _newton_attempt(
     model: FEModel,
     constraints: ConstraintSystem,
@@ -110,7 +116,9 @@ def _newton_attempt(
     element_executor: ElementExecutor | None = None,
     debug_timing: bool = False,
     linear_system_observer: Callable[[sparse.csr_matrix], None] | None = None,
+    linear_solver: LinearSolverConfig | None = None,
 ) -> _NewtonResult:
+    linear_solver = linear_solver or LinearSolverConfig("scipy_splu")
     controls = model.deck.data["nonlinear"]
     method = str(controls.get("method", "newton"))
     if method not in ("newton", "modified_newton"):
@@ -144,183 +152,189 @@ def _newton_attempt(
     pending_assembly: AssemblyResult | None = None
     ordering = str(model.deck.data["linear_solver"].get("ordering", "COLAMD"))
 
-    for iteration in range(max_iterations + 1):
-        iteration_start = perf_counter_ns()
-        refresh = method == "newton" or iteration == 0
-        assembly_wall_seconds = 0.0
-        assembly_reused = pending_assembly is not None
-        if pending_assembly is None:
-            assembly_start = perf_counter_ns()
-            try:
-                assembly = assemble_internal(
-                    model,
-                    u_n,
-                    u,
-                    t_n,
-                    t_np1,
-                    refresh,
-                    element_executor=element_executor,
-                    collect_timing=debug_timing,
-                )
-            except RecoverableError as exc:
-                assembly_wall_seconds = (perf_counter_ns() - assembly_start) * 1.0e-9
-                history.append(
-                    {
-                        "t_n": t_n,
-                        "t_np1": t_np1,
-                        "iteration": iteration,
-                        "failure_kind": "recoverable",
-                        "failure_message": str(exc),
-                        "assembly_wall_seconds": assembly_wall_seconds,
-                        "line_search_assembly_wall_seconds": 0.0,
-                        "kkt_factorization_wall_seconds": 0.0,
-                        "kkt_solve_wall_seconds": 0.0,
-                        "iteration_wall_seconds": (perf_counter_ns() - iteration_start) * 1.0e-9,
-                    }
-                )
-                raise
-            assembly_wall_seconds = (perf_counter_ns() - assembly_start) * 1.0e-9
-        else:
-            assembly = pending_assembly
-            pending_assembly = None
-        final_assembly = assembly
-        r_u = assembly.f_int - f_ext + C.T @ lambdas
-        r_c = C @ u - d
-        force_scale = max(_inf_norm(assembly.f_int), _inf_norm(f_ext), _inf_norm(C.T @ lambdas))
-        constraint_scale = max(_inf_norm(C @ u), _inf_norm(d))
-        force_tol = float(controls["force_atol"]) + float(controls["force_rtol"]) * force_scale
-        constraint_tol = float(controls["constraint_atol"]) + float(controls["constraint_rtol"]) * constraint_scale
-        displacement_tol = float(controls.get("displacement_atol", 0.0)) + float(
-            controls.get("displacement_rtol", 0.0)
-        ) * max(_inf_norm(u), _inf_norm(u_n))
-        residual_ok = _inf_norm(r_u) <= force_tol and _inf_norm(r_c) <= constraint_tol
-        displacement_ok = not controls.get("check_displacement_increment", False) or _inf_norm(last_du) <= displacement_tol
-        record = {
-            "t_n": t_n, "t_np1": t_np1, "iteration": iteration,
-            "force_residual_inf": _inf_norm(r_u), "force_tolerance": force_tol,
-            "constraint_residual_inf": _inf_norm(r_c), "constraint_tolerance": constraint_tol,
-            "displacement_increment_inf": _inf_norm(last_du),
-            "assembly_wall_seconds": assembly_wall_seconds,
-            "assembly_reused_from_line_search": assembly_reused,
-            "line_search_assembly_wall_seconds": 0.0,
-            "kkt_factorization_wall_seconds": 0.0,
-            "kkt_solve_wall_seconds": 0.0,
-        }
-        if debug_timing:
-            record["element_phase_wall_seconds"] = (
-                0.0 if assembly_reused or assembly.timing is None
-                else assembly.timing.element_phase_wall_seconds
-            )
-            record["sparse_finalize_wall_seconds"] = (
-                0.0 if assembly_reused or assembly.timing is None
-                else assembly.timing.sparse_finalize_wall_seconds
-            )
-        history.append(record)
-        if iteration_observer is not None:
-            iteration_observer(record, assembly)
-        try:
-            if residual_ok and displacement_ok:
-                return _NewtonResult(u, lambdas, assembly, iteration)
-            if iteration == max_iterations:
-                break
-            if refresh:
-                assert assembly.K is not None
-                frozen_K = assembly.K
-                if linear_system_observer is not None:
-                    linear_system_observer(frozen_K)
-                factor_start = perf_counter_ns()
-                factor = _factor_kkt(frozen_K, C, ordering)
-                record["kkt_factorization_wall_seconds"] = (
-                    perf_counter_ns() - factor_start
-                ) * 1.0e-9
-            assert factor is not None
-            solve_start = perf_counter_ns()
-            correction = factor.solve(-np.concatenate([np.asarray(r_u), np.asarray(r_c)]))
-            record["kkt_solve_wall_seconds"] = (perf_counter_ns() - solve_start) * 1.0e-9
-            if not np.all(np.isfinite(correction)):
-                raise ModelError("KKT solve returned a non-finite correction")
-            delta_u = correction[:model.mesh.ndof]
-            delta_lambda = correction[model.mesh.ndof:]
-            if line_search == "none":
-                last_du = delta_u
-                u += delta_u
-                lambdas += delta_lambda
-                continue
-
-            # Trial every candidate from the same committed material state.  Invalid
-            # intermediate configurations reject only the candidate, not the increment.
-            base_merit = _scaled_residual_merit(r_u, r_c, force_tol, constraint_tol)
-            alpha = 1.0
-            candidate_failures: list[str] = []
-            accepted = False
-            attempted_candidates = 0
-            line_search_element_seconds = 0.0
-            line_search_sparse_seconds = 0.0
-            for backtrack in range(line_search_max_backtracks + 1):
-                if alpha < line_search_min_alpha:
-                    break
-                attempted_candidates += 1
-                candidate_u = u + alpha * delta_u
-                candidate_lambdas = lambdas + alpha * delta_lambda
-                candidate_start = perf_counter_ns()
+    try:
+        for iteration in range(max_iterations + 1):
+            iteration_start = perf_counter_ns()
+            refresh = method == "newton" or iteration == 0
+            assembly_wall_seconds = 0.0
+            assembly_reused = pending_assembly is not None
+            if pending_assembly is None:
+                assembly_start = perf_counter_ns()
                 try:
-                    candidate = assemble_internal(
+                    assembly = assemble_internal(
                         model,
                         u_n,
-                        candidate_u,
+                        u,
                         t_n,
                         t_np1,
-                        method == "newton",
+                        refresh,
                         element_executor=element_executor,
                         collect_timing=debug_timing,
                     )
                 except RecoverableError as exc:
-                    candidate_failures.append(str(exc))
-                else:
-                    if debug_timing and candidate.timing is not None:
-                        line_search_element_seconds += candidate.timing.element_phase_wall_seconds
-                        line_search_sparse_seconds += candidate.timing.sparse_finalize_wall_seconds
-                    candidate_r_u = candidate.f_int - f_ext + C.T @ candidate_lambdas
-                    candidate_r_c = C @ candidate_u - d
-                    candidate_merit = _scaled_residual_merit(
-                        candidate_r_u, candidate_r_c, force_tol, constraint_tol
+                    assembly_wall_seconds = (perf_counter_ns() - assembly_start) * 1.0e-9
+                    history.append(
+                        {
+                            "t_n": t_n,
+                            "t_np1": t_np1,
+                            "iteration": iteration,
+                            "failure_kind": "recoverable",
+                            "failure_message": str(exc),
+                            "assembly_wall_seconds": assembly_wall_seconds,
+                            "line_search_assembly_wall_seconds": 0.0,
+                            "kkt_factorization_wall_seconds": 0.0,
+                            "kkt_solve_wall_seconds": 0.0,
+                            "iteration_wall_seconds": (perf_counter_ns() - iteration_start) * 1.0e-9,
+                        }
                     )
-                    if candidate_merit <= (1.0 - line_search_armijo * alpha) * base_merit:
-                        u = candidate_u
-                        lambdas = candidate_lambdas
-                        last_du = alpha * delta_u
-                        record["line_search_alpha"] = alpha
-                        record["line_search_backtracks"] = backtrack
-                        record["line_search_trials"] = attempted_candidates
-                        record["line_search_merit"] = candidate_merit
-                        record["line_search_recoverable_rejections"] = len(candidate_failures)
-                        if candidate_failures:
-                            record["line_search_last_failure"] = candidate_failures[-1]
-                        pending_assembly = candidate
-                        accepted = True
-                        break
-                finally:
-                    record["line_search_assembly_wall_seconds"] += (
-                        perf_counter_ns() - candidate_start
-                    ) * 1.0e-9
-                alpha *= line_search_reduction
+                    raise
+                assembly_wall_seconds = (perf_counter_ns() - assembly_start) * 1.0e-9
+            else:
+                assembly = pending_assembly
+                pending_assembly = None
+            final_assembly = assembly
+            r_u = assembly.f_int - f_ext + C.T @ lambdas
+            r_c = C @ u - d
+            force_scale = max(_inf_norm(assembly.f_int), _inf_norm(f_ext), _inf_norm(C.T @ lambdas))
+            constraint_scale = max(_inf_norm(C @ u), _inf_norm(d))
+            force_tol = float(controls["force_atol"]) + float(controls["force_rtol"]) * force_scale
+            constraint_tol = float(controls["constraint_atol"]) + float(controls["constraint_rtol"]) * constraint_scale
+            displacement_tol = float(controls.get("displacement_atol", 0.0)) + float(
+                controls.get("displacement_rtol", 0.0)
+            ) * max(_inf_norm(u), _inf_norm(u_n))
+            residual_ok = _inf_norm(r_u) <= force_tol and _inf_norm(r_c) <= constraint_tol
+            displacement_ok = not controls.get("check_displacement_increment", False) or _inf_norm(last_du) <= displacement_tol
+            record = {
+                "t_n": t_n, "t_np1": t_np1, "iteration": iteration,
+                "force_residual_inf": _inf_norm(r_u), "force_tolerance": force_tol,
+                "constraint_residual_inf": _inf_norm(r_c), "constraint_tolerance": constraint_tol,
+                "displacement_increment_inf": _inf_norm(last_du),
+                "assembly_wall_seconds": assembly_wall_seconds,
+                "assembly_reused_from_line_search": assembly_reused,
+                "line_search_assembly_wall_seconds": 0.0,
+                "kkt_factorization_wall_seconds": 0.0,
+                "kkt_solve_wall_seconds": 0.0,
+            }
             if debug_timing:
-                record["line_search_element_phase_wall_seconds"] = line_search_element_seconds
-                record["line_search_sparse_finalize_wall_seconds"] = line_search_sparse_seconds
-            if not accepted:
-                record["line_search_alpha"] = None
-                record["line_search_backtracks"] = attempted_candidates
-                record["line_search_trials"] = attempted_candidates
-                record["line_search_recoverable_rejections"] = len(candidate_failures)
-                if candidate_failures:
-                    record["line_search_last_failure"] = candidate_failures[-1]
-                raise RecoverableError(
-                    "Newton line search could not find an admissible residual-reducing step"
+                record["element_phase_wall_seconds"] = (
+                    0.0 if assembly_reused or assembly.timing is None
+                    else assembly.timing.element_phase_wall_seconds
                 )
-        finally:
-            record["iteration_wall_seconds"] = (perf_counter_ns() - iteration_start) * 1.0e-9
-    assert final_assembly is not None
-    raise RecoverableError(f"global Newton failed in {max_iterations} iterations")
+                record["sparse_finalize_wall_seconds"] = (
+                    0.0 if assembly_reused or assembly.timing is None
+                    else assembly.timing.sparse_finalize_wall_seconds
+                )
+            history.append(record)
+            if iteration_observer is not None:
+                iteration_observer(record, assembly)
+            try:
+                if residual_ok and displacement_ok:
+                    return _NewtonResult(u, lambdas, assembly, iteration)
+                if iteration == max_iterations:
+                    break
+                if refresh:
+                    assert assembly.K is not None
+                    frozen_K = assembly.K
+                    if linear_system_observer is not None:
+                        linear_system_observer(frozen_K)
+                    with timer(record, "kkt_factorization_wall_seconds"):
+                        factor = _factor_kkt(frozen_K, C, ordering, linear_solver)
+                assert factor is not None
+                with timer(record, "kkt_solve_wall_seconds"):
+                    correction = solve_factor(
+                        factor,
+                        -np.concatenate([np.asarray(r_u), np.asarray(r_c)]),
+                        linear_solver,
+                    )
+                if method == "newton":
+                    close_factor(factor)
+                    factor = None
+                if not np.all(np.isfinite(correction)):
+                    raise ModelError("KKT solve returned a non-finite correction")
+                delta_u = correction[:model.mesh.ndof]
+                delta_lambda = correction[model.mesh.ndof:]
+                if line_search == "none":
+                    last_du = delta_u
+                    u += delta_u
+                    lambdas += delta_lambda
+                    continue
+
+                # Trial every candidate from the same committed material state.  Invalid
+                # intermediate configurations reject only the candidate, not the increment.
+                base_merit = _scaled_residual_merit(r_u, r_c, force_tol, constraint_tol)
+                alpha = 1.0
+                candidate_failures: list[str] = []
+                accepted = False
+                attempted_candidates = 0
+                line_search_element_seconds = 0.0
+                line_search_sparse_seconds = 0.0
+                for backtrack in range(line_search_max_backtracks + 1):
+                    if alpha < line_search_min_alpha:
+                        break
+                    attempted_candidates += 1
+                    candidate_u = u + alpha * delta_u
+                    candidate_lambdas = lambdas + alpha * delta_lambda
+                    candidate_start = perf_counter_ns()
+                    try:
+                        candidate = assemble_internal(
+                            model,
+                            u_n,
+                            candidate_u,
+                            t_n,
+                            t_np1,
+                            method == "newton",
+                            element_executor=element_executor,
+                            collect_timing=debug_timing,
+                        )
+                    except RecoverableError as exc:
+                        candidate_failures.append(str(exc))
+                    else:
+                        if debug_timing and candidate.timing is not None:
+                            line_search_element_seconds += candidate.timing.element_phase_wall_seconds
+                            line_search_sparse_seconds += candidate.timing.sparse_finalize_wall_seconds
+                        candidate_r_u = candidate.f_int - f_ext + C.T @ candidate_lambdas
+                        candidate_r_c = C @ candidate_u - d
+                        candidate_merit = _scaled_residual_merit(
+                            candidate_r_u, candidate_r_c, force_tol, constraint_tol
+                        )
+                        if candidate_merit <= (1.0 - line_search_armijo * alpha) * base_merit:
+                            u = candidate_u
+                            lambdas = candidate_lambdas
+                            last_du = alpha * delta_u
+                            record["line_search_alpha"] = alpha
+                            record["line_search_backtracks"] = backtrack
+                            record["line_search_trials"] = attempted_candidates
+                            record["line_search_merit"] = candidate_merit
+                            record["line_search_recoverable_rejections"] = len(candidate_failures)
+                            if candidate_failures:
+                                record["line_search_last_failure"] = candidate_failures[-1]
+                            pending_assembly = candidate
+                            accepted = True
+                            break
+                    finally:
+                        record["line_search_assembly_wall_seconds"] += (
+                            perf_counter_ns() - candidate_start
+                        ) * 1.0e-9
+                    alpha *= line_search_reduction
+                if debug_timing:
+                    record["line_search_element_phase_wall_seconds"] = line_search_element_seconds
+                    record["line_search_sparse_finalize_wall_seconds"] = line_search_sparse_seconds
+                if not accepted:
+                    record["line_search_alpha"] = None
+                    record["line_search_backtracks"] = attempted_candidates
+                    record["line_search_trials"] = attempted_candidates
+                    record["line_search_recoverable_rejections"] = len(candidate_failures)
+                    if candidate_failures:
+                        record["line_search_last_failure"] = candidate_failures[-1]
+                    raise RecoverableError(
+                        "Newton line search could not find an admissible residual-reducing step"
+                    )
+            finally:
+                record["iteration_wall_seconds"] = (perf_counter_ns() - iteration_start) * 1.0e-9
+        assert final_assembly is not None
+        raise RecoverableError(f"global Newton failed in {max_iterations} iterations")
+    finally:
+        close_factor(factor)
 
 
 def _matches(t: float, values: set[float], tol: float) -> bool:
@@ -368,6 +382,8 @@ def run_analysis(
     stop_time: float | None = None,
     num_processes: int = 1,
     debug_timing: bool = False,
+    solver_backend: str | None = None,
+    num_threads: int | None = None,
 ) -> AnalysisResult:
     analysis_wall_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
@@ -375,6 +391,10 @@ def run_analysis(
     mesh = prepared.mesh
     model = prepared.model
     constraints = prepared.constraints
+    linear_solver = LinearSolverConfig(
+        solver_backend or str(deck.data["linear_solver"]["backend"]),
+        num_threads,
+    )
     events = prepared.events.copy()
     restart_times = prepared.restart_times
     analysis = deck.data["analysis"]
@@ -434,13 +454,18 @@ def run_analysis(
         run_target=t_end,
         restarted=bool(restart_from),
         solution_method="lagrange_multiplier_kkt",
-        solution_backend=str(deck.data["linear_solver"]["backend"]),
+        solution_backend=linear_solver.backend,
         unknowns_by_type={
             "displacement": int(mesh.ndof),
             "multiplier": int(constraints.C.shape[0]),
         },
         solution_options={
-            "ordering": str(deck.data["linear_solver"].get("ordering", "COLAMD"))
+            "ordering": str(deck.data["linear_solver"].get("ordering", "COLAMD")),
+            **(
+                {"num_threads": linear_solver.num_threads}
+                if linear_solver.backend == "superlu_mt"
+                else {}
+            ),
         },
     )
     print_startup_summary(analysis_summary)
@@ -535,6 +560,7 @@ def run_analysis(
                         element_executor=executor,
                         debug_timing=debug_timing,
                         linear_system_observer=observe_linear_system,
+                        linear_solver=linear_solver,
                     )
                 except RecoverableError:
                     cutbacks += 1

@@ -28,8 +28,13 @@ def prepare_analysis(deck_or_path: Deck | str | Path) -> PreparedAnalysis:
     deck = deck_or_path if isinstance(deck_or_path, Deck) else load_deck(deck_or_path)
     if deck.data["mesh"].get("format") != "gmsh_msh41":
         raise ModelError("v1 supports only mesh.format = 'gmsh_msh41'")
-    if deck.data["linear_solver"].get("backend") != "scipy_splu":
-        raise ModelError("v1 requires linear_solver.backend = 'scipy_splu'")
+    if deck.data["linear_solver"].get("backend") not in {
+        "scipy_splu",
+        "superlu_mt",
+    }:
+        raise ModelError(
+            "linear_solver.backend must be 'scipy_splu' or 'superlu_mt'"
+        )
     mesh = read_gmsh(deck.resolve(str(deck.data["mesh"]["file"])))
     model = build_model(deck, mesh)
     constraints = build_constraints(deck, mesh)

@@ -1,4 +1,4 @@
-# Finite-strain FE prototype
+# Finite strain finite element prototype
 
 This repository implements the v1 contract in `docs/IMPLEMENTATION_SPEC.md`:
 
@@ -12,6 +12,37 @@ This repository implements the v1 contract in `docs/IMPLEMENTATION_SPEC.md`:
 - append-only accepted-state HDF5 output, HDF5 restart, and separate temporal XDMF postprocessing.
 
 The production element tangents use the specification's current-configuration Truesdell push-forward, geometric stiffness, and F-bar projection correction. An independent total-reference F-bar kernel and centered directional finite differences cross-check that decomposition.
+
+
+## Project status and TODO
+
+### FE solver 
+
+* [x] Implement full-integration Hex8 and Hex20  and Hex-8 F-bar elements.
+* [x] Add neo-Hookean and finite-strain J2 plasticity with consistent algorithmic tangent.
+* [x] Implement cutback and adaptive time stepping.
+* [x] Add support for periodic boundary conditions (via Gmsh-based periodic boundary conditions).
+* [x] Implement HDF5 results/restart and temporal XDMF postprocessing for ParaView.
+* [x] Implement process-based parallel element evaluation.
+* [x] Validate J2 plasticity model against benchmarks from literature.
+* [x] Add timing information around time consuming parts of the solver for debugging and observability.
+* [x] Add selectable SciPy/SuperLU_MT sparse-direct solvers for the global KKT system.
+* [ ] Add crystal plasticity model with its Python bridge and solve examples on multi-grain RVEs.
+
+### Parallel global linear solver
+
+* [x] Capture FE KKT systems for isolated linear-solver testing.
+* [x] Evaluate SuperLU_MT against the existing SciPy/SuperLU reference solver.
+* [x] Develop a persistent native C and Python bridges for SuperLU_MT factorization and solve.
+* [x] Benchmark SuperLU_MT thread scaling on representative FE systems.
+* [x] Integrate SuperLU_MT as a lazy-loaded selectable backend in the production global solver.
+* [ ] Add persistent numerical refactorization (`refact=YES`) so symbolic/sparsity information can be reused when the KKT structure is unchanged.
+* [ ] Preserve factor reuse for modified Newton and refactor only when the tangent changes.
+
+### Follow-up development
+
+* [ ] Review and document the exact Newton/modified-Newton conventions used by the implementation and keep formulation, specification, and code terminology synchronized.
+* [ ] Revisit the symmetry/nonsymmetry assumptions for the consistent tangent and assembled stiffness.
 
 ## Run
 
@@ -52,6 +83,27 @@ python -m fe_solver examples/j2_necking_prism_small_hex8_fbar.toml
 
 For a controlled partial run, add `--stop-time 0.5`. Relative mesh and output paths are resolved from the deck directory.
 The explicit equivalent command is `python -m fe_solver solve DECK`.
+
+Decks use the serial `scipy_splu` reference backend by default. To build the native bridge and select SuperLU_MT for a
+run, use an explicit build parallelism and solver thread count:
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -Denable_internal_blaslib=ON \
+  -DTHREAD_API=PTHREAD \
+  -DPLAT=_PTHREAD
+
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+
+python -m fe_solver examples/case_a_hex8.toml \
+  --solver-backend superlu_mt --num-threads N
+```
+
+The bridge is loaded from `build/native/libsuperlu_mt_bridge.so` only when `superlu_mt` is selected. SuperLU_MT has no
+implicit thread-count default; omitting `--num-threads` is an input error. The selected backend and its thread count are
+recorded in `run_log.json`.
 
 Element evaluation defaults to the serial reference path. To reuse two local worker processes throughout the solve:
 
