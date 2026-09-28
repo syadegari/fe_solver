@@ -79,6 +79,10 @@ def j2_update_kernel(
     )
     trial_function = norm_trial - _SQRT_TWO_THIRDS * yield_n
     scale = max(norm_trial, yield_n, shear_modulus, 1.0)
+    
+    # Suppress roundoff-scale positive yield values. The same stress-scaled
+    # tolerance is used for convergence of the local consistency solve.
+    # For a shear-mod of 80200 MPa, this is roughly 1e-12 * 80200 = 8.02e-8 MPa
     plastic = trial_function > 1.0e-12 * scale
     mu_bar = shear_modulus * float(np.trace(b_trial)) / 3.0
     delta_gamma = 0.0
