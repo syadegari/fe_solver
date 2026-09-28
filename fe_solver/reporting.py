@@ -109,8 +109,11 @@ def print_linear_system_summary(summary: dict[str, object]) -> None:
         f"{count} {name.replace('_', ' ')}"
         for name, count in unknowns["by_type"].items()
     )
+    backend_description = str(linear["backend"])
+    if "num_threads" in linear["options"]:
+        backend_description += f" ({linear['options']['num_threads']} threads)"
     print(
-        f"linear system: {linear['backend']} {system['name']}; "
+        f"linear system: {backend_description} {system['name']}; "
         f"{primary['name']} {primary['shape'][0]} x {primary['shape'][1]} with "
         f"{primary['stored_entries']} stored entries; "
         f"{system['name']} {system['shape'][0]} x {system['shape'][1]} "

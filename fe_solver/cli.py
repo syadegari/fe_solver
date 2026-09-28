@@ -29,16 +29,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     solve.add_argument(
         "--solver-backend",
-        choices= ("splu", "superlu_mt"),
-        default="splu",
-        help="select backend for the global solver (default: splu)",
+        choices=("scipy_splu", "superlu_mt"),
+        default=None,
+        help="override linear_solver.backend from the analysis deck",
     )
     solve.add_argument(
         "--num-threads",
         type=int,
         default=None,
         metavar="N",
-        help=f"number of threads used for superlu_mt backend solver",
+        help="required number of threads when using superlu_mt",
     )
     post = commands.add_parser("postprocess", help="create temporal XDMF from a run database")
     post.add_argument("database", type=Path, help="path to run.h5")
@@ -54,7 +54,8 @@ def main(argv: list[str] | None = None) -> None:
             stop_time=args.stop_time,
             num_processes=args.num_processes,
             debug_timing=args.debug_timing,
-            solver_backend=args.solver_backend
+            solver_backend=args.solver_backend,
+            num_threads=args.num_threads,
         )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")

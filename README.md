@@ -26,7 +26,7 @@ The production element tangents use the specification's current-configuration Tr
 * [x] Implement process-based parallel element evaluation.
 * [x] Validate J2 plasticity model against benchmarks from literature.
 * [x] Add timing information around time consuming parts of the solver for debugging and observability.
-* [ ] Add parallel solver for global linear system.
+* [x] Add selectable SciPy/SuperLU_MT sparse-direct solvers for the global KKT system.
 * [ ] Add crystal plasticity model with its Python bridge and solve examples on multi-grain RVEs.
 
 ### Parallel global linear solver
@@ -35,7 +35,7 @@ The production element tangents use the specification's current-configuration Tr
 * [x] Evaluate SuperLU_MT against the existing SciPy/SuperLU reference solver.
 * [x] Develop a persistent native C and Python bridges for SuperLU_MT factorization and solve.
 * [x] Benchmark SuperLU_MT thread scaling on representative FE systems.
-* [ ] **In progress:** integrate SuperLU_MT as a selectable backend in the production global solver.
+* [x] Integrate SuperLU_MT as a lazy-loaded selectable backend in the production global solver.
 * [ ] Add persistent numerical refactorization (`refact=YES`) so symbolic/sparsity information can be reused when the KKT structure is unchanged.
 * [ ] Preserve factor reuse for modified Newton and refactor only when the tangent changes.
 
@@ -83,6 +83,27 @@ python -m fe_solver examples/j2_necking_prism_small_hex8_fbar.toml
 
 For a controlled partial run, add `--stop-time 0.5`. Relative mesh and output paths are resolved from the deck directory.
 The explicit equivalent command is `python -m fe_solver solve DECK`.
+
+Decks use the serial `scipy_splu` reference backend by default. To build the native bridge and select SuperLU_MT for a
+run, use an explicit build parallelism and solver thread count:
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -Denable_internal_blaslib=ON \
+  -DTHREAD_API=PTHREAD \
+  -DPLAT=_PTHREAD
+
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+
+python -m fe_solver examples/case_a_hex8.toml \
+  --solver-backend superlu_mt --num-threads N
+```
+
+The bridge is loaded from `build/native/libsuperlu_mt_bridge.so` only when `superlu_mt` is selected. SuperLU_MT has no
+implicit thread-count default; omitting `--num-threads` is an input error. The selected backend and its thread count are
+recorded in `run_log.json`.
 
 Element evaluation defaults to the serial reference path. To reuse two local worker processes throughout the solve:
 

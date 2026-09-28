@@ -723,7 +723,8 @@ verification. `--num-processes N` is a command-line execution choice with defaul
 model definition or restart identity. Never select all available CPUs implicitly. Report the requested and effective
 process counts and the available physical/logical CPU counts so the user can choose an appropriate value. The effective
 count may be reduced to the number of elements. Limit numerical-library thread pools to one thread inside each element
-worker to avoid nested oversubscription; global sparse-solver threading is outside this v1 parallelization.
+worker to avoid nested oversubscription. Global sparse-solver threads are controlled separately by the selected linear
+backend and are never inferred from the available CPU count.
 
 Workers receive serializable element-local copies and return element responses. They do not mutate the mesh, global
 vectors/matrices, committed material state, result database, or JSON log. The parent consumes responses in the original
@@ -810,18 +811,27 @@ $$
 
 Individual multiplier values are basis/row-scaling dependent. Do not interpret them as unique physical reactions in isolation.
 
-### 15.1 Mandatory linear backend
+### 15.1 Sparse direct linear backends
 
-The required correctness backend is sparse direct LU of the **whole KKT matrix**. Recommended prototype path:
+The required correctness path is sparse direct LU of the **whole KKT matrix**:
 
 ```text
 K: CSR
 C: CSR
 KKT: sparse block -> CSC
-factor/solve: scipy.sparse.linalg.splu (or equivalent spsolve path)
+factor/solve: scipy_splu or superlu_mt
 ```
 
-Do not separately factor `K` and then eliminate constraints.
+`scipy_splu` is the serial reference backend. `superlu_mt` uses the native bridge at
+`build/native/libsuperlu_mt_bridge.so`, which must be imported and loaded only when that backend is selected. Selecting
+`superlu_mt` requires an explicit positive thread count; the program must not choose a default or infer one from the
+machine. Limit parent-process BLAS thread pools to one around SuperLU_MT factor and solve calls to avoid nested
+parallelism when the linked BLAS provides its own threads.
+
+Both backends use the same assembled CSC KKT matrix and return a factor with a `solve` operation. Factor ownership
+belongs to one Newton attempt. Exact Newton releases each factor immediately after its one solve; modified Newton
+retains one factor for the attempt. Every remaining factor must be explicitly released on convergence, recoverable
+failure, or exception. Do not separately factor `K` and then eliminate constraints.
 
 ### 15.2 Optional iterative backend
 
@@ -1078,6 +1088,10 @@ Minimum top-level responsibilities:
 [verification]
 ```
 
+`linear_solver.backend` is either `scipy_splu` or `superlu_mt`. The command-line `--solver-backend` option may override
+the deck for one run. A SuperLU_MT run additionally requires `--num-threads N`; thread count is an execution choice and
+is not stored in the model deck.
+
 
 A scalar value expression may contain a constant term, a curve term, or both. When both are present, evaluate
 
@@ -1256,7 +1270,8 @@ of the retained prefix.
 
 The JSON log also records execution and performance telemetry. Its top-level `execution` object contains the element
 backend, requested/effective process counts, available physical/logical CPU counts, process start method, and worker
-BLAS thread limit. `timing.elapsed_wall_seconds` measures the run through the latest durable log update. Every ordinary
+BLAS thread limit. The `analysis.linear_system` object records the effective global backend and, for SuperLU_MT, its
+explicit thread count. `timing.elapsed_wall_seconds` measures the run through the latest durable log update. Every ordinary
 Newton record contains `iteration_wall_seconds`, `assembly_wall_seconds`, `line_search_assembly_wall_seconds`,
 `kkt_factorization_wall_seconds`, and `kkt_solve_wall_seconds`. Line-search assembly time is the sum over attempted
 candidates; when an accepted candidate assembly is reused by the next exact-Newton iteration, that next record marks
@@ -1412,6 +1427,9 @@ postprocessing output.
 15. For Hex8, Hex8-Fbar, Hex20, and a stateful J2/F-bar update, compare serial and two-process element responses,
     assembled residual/tangent, and trial state to machine precision. Exercise more than one assembly through the same
     pool and verify that a recoverable failure leaves committed state unchanged and does not poison the pool.
+16. Verify that the SciPy path imports and runs without a built SuperLU_MT bridge. When the bridge is available, compare
+    both direct backends on the same nonsymmetric KKT system and compare complete FE result databases with relative and
+    absolute tolerances no weaker than `1e-8` unless recorded benchmark evidence justifies a different bound.
 
 ---
 
