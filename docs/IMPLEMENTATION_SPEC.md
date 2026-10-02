@@ -213,7 +213,48 @@ The default cold start is the stress-free reference configuration with `u_0 = 0`
 
 The solver owns stress-measure and tangent transformations. A material returns first Piola-Kirchhoff stress and `dP/dF` only.
 
-### 5.3 Standalone material-point path driver
+### 5.3 External multiphase TRIP ABI
+
+The non-public multiphase TRIP steel implementation is built as a domain-specific shared library because its ferrite and
+austenite orientation catalogs are fixed-name Fortran include files. A build must name the domain directory explicitly,
+validate consecutive one-based catalog branches, and embed both orientation counts in the library. The solver-facing
+orientation property remains zero-based; the ABI bridge alone converts it to the legacy one-based `MaterialID`.
+
+ABI version 2 exports separate BCC/ferrite and FCC/austenite initializer and update functions. Their state sizes are
+exactly 93 and 151 doubles. Updates receive `F_n`, `F_np1`, committed state, endpoint times,
+zero-based orientation ID, and the tangent request. They return first Piola--Kirchhoff stress, complete
+trial state, and `dP/dF`. The bridge copies committed state before entering the legacy kernel.
+The bridge sets temperature to the compiled `Theta0` constant from `constants.for` (currently 300 K) and sets its
+increment to zero. Temperature is absent from the C ABI, material properties, and deck-generation options. Changing
+the constant requires rebuilding the shared library. Reject ABI version 1 libraries before calling an update.
+
+Flat tensor buffers use C row-major indexing:
+
+```text
+F[3*i + I]
+P[3*i + I]
+A[27*i + 9*I + 3*j + J] = dP[i,I]/dF[j,J]
+```
+
+Reject invalid state sizes, orientation IDs, endpoint times, non-finite state, non-finite responses, and
+deformation gradients with nonpositive determinant at the ABI boundary. The current legacy routine constructs its
+tangent unconditionally; `need_tangent=false` permits the Python wrapper to discard it but does not yet avoid its
+calculation. Some internal legacy `STOP` paths remain process-terminating rather than recoverable and must not be
+misrepresented as material status returns.
+
+Register the two Python material roots `multiphase_trip_ferrite` and `multiphase_trip_austenite`. The latter includes
+austenite-to-martensite transformation and the resulting response. Both require the sole input property
+`library`; resolve a relative library path against the deck directory. Keep the declared
+path as public metadata, add the library SHA-256 to material/model identity, and keep the machine-specific resolved
+path private to runtime properties. Each process worker loads and caches its own library handle lazily.
+
+The BCC and FCC state layouts each contain one neutral rank-one field named `internal_variables`, with respectively 93
+and 151 zero-based component labels. Initialization and every update require scalar `phase_id` and `orientation_id`
+point properties. Enforce `phase_id=1` for BCC/ferrite and `phase_id=2` for FCC/austenite, and validate the orientation
+against the count compiled into the selected library. ABI setup/configuration failures are fatal; invalid trial
+kinematics and non-finite local responses are recoverable so the increment controller may cut back.
+
+### 5.4 Standalone material-point path driver
 
 Provide a solver-independent verification driver that accepts a registered material, either a target `3 x 3` deformation gradient or a callable path `F(s)`, and a positive number of equal path increments. It must call the material initializer once, advance from `s=0` to `s=1`, and commit each successful local state before the next local increment. This sequential local history is deliberate and is distinct from the global Newton rule, where every trial within one global increment starts from the same committed state.
 

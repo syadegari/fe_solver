@@ -6,6 +6,17 @@ from types import MappingProxyType
 
 import numpy as np
 
+from .multiphase_trip import (
+    BCC_STATE_LAYOUT,
+    FCC_STATE_LAYOUT,
+    init_multiphase_trip_ferrite,
+    init_multiphase_trip_austenite,
+    resolve_trip_properties,
+    update_multiphase_trip_ferrite,
+    update_multiphase_trip_austenite,
+    validate_trip_properties,
+)
+
 from .j2_kernel import (
     J2_INVALID_KINEMATICS,
     J2_INVALID_STATE,
@@ -208,6 +219,26 @@ register_material_model(
 
 register_material_model(
     MaterialModel(
+        root="multiphase_trip_ferrite",
+        update=update_multiphase_trip_ferrite,
+        initialize=init_multiphase_trip_ferrite,
+        validate_properties=validate_trip_properties,
+        state_layout=BCC_STATE_LAYOUT,
+    )
+)
+
+register_material_model(
+    MaterialModel(
+        root="multiphase_trip_austenite",
+        update=update_multiphase_trip_austenite,
+        initialize=init_multiphase_trip_austenite,
+        validate_properties=validate_trip_properties,
+        state_layout=FCC_STATE_LAYOUT,
+    )
+)
+
+register_material_model(
+    MaterialModel(
         root="j2_plasticity",
         update=update_j2_plasticity,
         initialize=init_j2_plasticity,
@@ -226,6 +257,10 @@ def material_definition(
         raise ModelError("a material cannot define both properties and legacy parameters")
     raw_properties = data.get("properties", data.get("parameters", {}))
     properties = model.validate_properties(dict(raw_properties))
+    if root in {"multiphase_trip_ferrite", "multiphase_trip_austenite"}:
+        if base_directory is None:
+            raise ModelError("multiphase TRIP material requires a deck base directory")
+        properties = resolve_trip_properties(properties, base_directory)
     properties = MappingProxyType(dict(properties))
     return MaterialDefinition(str(data["name"]), model, properties)
 
