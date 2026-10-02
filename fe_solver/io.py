@@ -5,19 +5,27 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-from typing import Any
+from typing import Any, Mapping
 
 import h5py
 import numpy as np
 
 from .assembly import AssemblyResult, FEModel
-from .output_fields import TENSOR_COMPONENTS, pack_symmetric
+from .output_fields import TENSOR_COMPONENTS, StateOutputField, pack_symmetric
 from .shape import hex20_shape, hex8_shape
 from .types import ModelError
 
 
 RESULT_SCHEMA_VERSION = 3
 RESTART_SCHEMA_VERSION = 2
+
+
+def _public_material_properties(properties: Mapping[str, object]) -> dict[str, object]:
+    return {
+        str(name): value
+        for name, value in dict(properties).items()
+        if not str(name).startswith("_")
+    }
 
 
 def model_identity(model: FEModel) -> str:
@@ -32,9 +40,29 @@ def model_identity(model: FEModel) -> str:
         digest.update(block.element_tags.tobytes())
         digest.update(block.connectivity.tobytes())
         digest.update(str(block.state_n.shape).encode())
+        digest.update(
+            _json(_public_material_properties(block.material.properties)).encode()
+        )
+        for properties in block.point_properties:
+            if properties is None:
+                digest.update(b"no-point-properties")
+                continue
+            for name in sorted(properties):
+                value = np.asarray(properties[name])
+                digest.update(name.encode())
+                digest.update(value.dtype.str.encode())
+                digest.update(str(value.shape).encode())
+                digest.update(value.tobytes())
     identity_tables = {
         key: model.deck.data.get(key)
-        for key in ("curves", "materials", "element_assignments", "constraints", "loads")
+        for key in (
+            "curves",
+            "materials",
+            "point_property_sources",
+            "element_assignments",
+            "constraints",
+            "loads",
+        )
     }
     digest.update(json.dumps(identity_tables, sort_keys=True, separators=(",", ":")).encode())
     return digest.hexdigest()
@@ -89,10 +117,18 @@ def recover_cell_fields(model: FEModel, assembly: AssemblyResult, u: np.ndarray)
             almansi[element_index] = 0.5 * (np.eye(3) - Finv.T @ Finv)
         packed_center = _center_sample(block.state_n, block.formulation)
         state: dict[str, np.ndarray] = {}
-        for state_field in block.material.state_layout.fields:
-            field_slice, field_shape = block.material.state_layout.field_slice(state_field.name)
-            values = packed_center[:, field_slice]
-            state[state_field.name] = values.reshape((len(block.connectivity), *field_shape))
+        for selection in model.state_output[block.material.name]:
+            field_slice, field_shape = block.material.state_layout.field_slice(
+                selection.source.name
+            )
+            values = packed_center[:, field_slice].reshape(
+                (len(block.connectivity), *field_shape)
+            )
+            if selection.component_indices is not None:
+                values = values[:, selection.component_indices]
+                if len(selection.component_indices) == 1:
+                    values = values[:, 0]
+            state[selection.name] = values
         fields.append(CellFields(stress_center, green, almansi, state))
     return fields
 
@@ -164,6 +200,18 @@ class HDF5ResultWriter:
             group.attrs["connectivity_ordering"] = "gmsh"
             group.create_dataset("element_tags", data=block.element_tags)
             group.create_dataset("connectivity", data=block.connectivity)
+            selected_properties = group.create_group("cell_properties")
+            for property_name in self.model.cell_property_output:
+                if not block.point_properties or block.point_properties[0] is None:
+                    continue
+                if property_name not in block.point_properties[0]:
+                    continue
+                values = np.asarray(
+                    [properties[property_name] for properties in block.point_properties]
+                )
+                dataset = selected_properties.create_dataset(property_name, data=values)
+                dataset.attrs["centering"] = "cell"
+                dataset.attrs["source"] = "point_properties"
 
         materials = root.create_group("materials")
         seen: set[str] = set()
@@ -175,7 +223,9 @@ class HDF5ResultWriter:
             seen.add(material.name)
             group.attrs["name"] = material.name
             group.attrs["model"] = material.model_root
-            group.attrs["properties_json"] = _json(dict(material.properties))
+            group.attrs["properties_json"] = _json(
+                _public_material_properties(material.properties)
+            )
             group.attrs["state_layout_json"] = _json(
                 [
                     {
@@ -196,6 +246,12 @@ class HDF5ResultWriter:
 
         results = root.create_group("results")
         results.attrs["n_complete_steps"] = 0
+        results.attrs["material_state_output_json"] = _json(
+            self._material_state_output_layout()
+        )
+        results.attrs["cell_property_output_json"] = _json(
+            self.model.cell_property_output
+        )
         _create_time_dataset(results, "time", ())
         nodal = results.create_group("nodal")
         _create_time_dataset(nodal, "displacement", (len(self.model.mesh.X), 3))
@@ -221,19 +277,43 @@ class HDF5ResultWriter:
                 tensor.attrs["shear_convention"] = "tensorial"
                 tensor.attrs["shear_scale"] = 1.0
             state_group = group.create_group("state")
-            for field in block.material.state_layout.fields:
+            for selection in self.model.state_output[block.material.name]:
                 dataset = _create_time_dataset(
-                    state_group, field.name, (len(block.connectivity), *field.shape)
+                    state_group,
+                    selection.name,
+                    (len(block.connectivity), *selection.shape),
                 )
                 dataset.attrs["centering"] = "cell"
                 dataset.attrs["recovery"] = stress.attrs["recovery"]
-                if field.component_order:
+                dataset.attrs["source_field"] = selection.source.name
+                dataset.attrs["source_selector"] = selection.selector
+                if selection.component_order:
                     dataset.attrs["component_order"] = np.asarray(
-                        field.component_order, dtype=h5py.string_dtype()
+                        selection.component_order, dtype=h5py.string_dtype()
                     )
+                if (
+                    selection.component_indices is None
+                    and selection.source.component_order == TENSOR_COMPONENTS
+                ):
                     dataset.attrs["shear_convention"] = "tensorial"
                     dataset.attrs["shear_scale"] = 1.0
         root.flush()
+
+    def _material_state_output_layout(self) -> dict[str, list[dict[str, object]]]:
+        return {
+            material_name: [
+                {
+                    "name": field.name,
+                    "selector": field.selector,
+                    "source_field": field.source.name,
+                    "component_indices": field.component_indices,
+                    "component_order": field.component_order,
+                    "shape": field.shape,
+                }
+                for field in fields
+            ]
+            for material_name, fields in sorted(self.model.state_output.items())
+        }
 
     def _time_datasets(self) -> list[h5py.Dataset]:
         datasets: list[h5py.Dataset] = []
@@ -250,6 +330,20 @@ class HDF5ResultWriter:
             raise ModelError("results database schema version mismatch")
         if str(self.file.attrs.get("model_identity", "")) != model_identity(self.model):
             raise ModelError("results database model identity mismatch")
+        expected_output = _json(self._material_state_output_layout())
+        stored_output = self.file["results"].attrs.get("material_state_output_json")
+        if isinstance(stored_output, bytes):
+            stored_output = stored_output.decode("utf-8")
+        if stored_output != expected_output:
+            raise ModelError("results database material-state output layout mismatch")
+        expected_cell_output = _json(self.model.cell_property_output)
+        stored_cell_output = self.file["results"].attrs.get(
+            "cell_property_output_json"
+        )
+        if isinstance(stored_cell_output, bytes):
+            stored_cell_output = stored_cell_output.decode("utf-8")
+        if stored_cell_output != expected_cell_output:
+            raise ModelError("results database cell-property output layout mismatch")
         complete = int(self.file["results"].attrs["n_complete_steps"])
         for dataset in self._time_datasets():
             if dataset.shape[0] < complete:

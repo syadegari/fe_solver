@@ -88,6 +88,14 @@ explicit_times = [0.14285714285714285, 0.2857142857142857, 0.42857142857142855, 
 database = "run.h5"
 history_file = "run_log.json"
 
+[[output.material_state]]
+material = "voce_steel"
+select = "plastic_metric_inverse"
+
+[[output.material_state]]
+material = "voce_steel"
+select = "equivalent_plastic_strain"
+
 [restart]
 enabled = true
 interval = 0.2

@@ -80,6 +80,11 @@ def _attribute_type(shape: tuple[int, ...]) -> str:
     return "Matrix"
 
 
+def _generic_component_attribute_type(value_shape: tuple[int, ...]) -> str:
+    """Avoid assigning spatial vector/tensor meaning to arbitrary components."""
+    return "Scalar" if not value_shape or value_shape == (1,) else "Matrix"
+
+
 def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
     """Create one ParaView-readable temporal XDMF collection from a solver HDF5 database."""
     database = Path(database).resolve()
@@ -181,6 +186,30 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
                     attribute, tuple(reaction.shape), step,
                     f"{sidecar_ref}:/results/nodal/constraint_reaction",
                 )
+                if "cell_properties" in mesh_block:
+                    for property_name, dataset in mesh_block["cell_properties"].items():
+                        attribute = ET.SubElement(
+                            grid,
+                            "Attribute",
+                            Name=property_name,
+                            AttributeType=_generic_component_attribute_type(
+                                tuple(dataset.shape[1:])
+                            ),
+                            Center="Cell",
+                        )
+                        number_type = (
+                            "Int"
+                            if np.issubdtype(dataset.dtype, np.integer)
+                            or np.issubdtype(dataset.dtype, np.bool_)
+                            else "Float"
+                        )
+                        _data_item(
+                            attribute,
+                            tuple(dataset.shape),
+                            f"{source_ref}:{dataset.name}",
+                            number_type=number_type,
+                            precision=str(dataset.dtype.itemsize),
+                        )
                 for field_name in (
                     "cauchy_stress", "green_lagrange_strain", "euler_almansi_strain"
                 ):
@@ -201,7 +230,9 @@ def write_xdmf(database: str | Path, output: str | Path | None = None) -> Path:
                             grid,
                             "Attribute",
                             Name=f"state_{state_name}",
-                            AttributeType=_attribute_type(tuple(dataset.shape)),
+                            AttributeType=_generic_component_attribute_type(
+                                tuple(dataset.shape[2:])
+                            ),
                             Center="Cell",
                         )
                         if "component_order" in dataset.attrs:

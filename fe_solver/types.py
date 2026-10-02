@@ -91,6 +91,30 @@ class MaterialStateView(Mapping[str, np.ndarray | float]):
         return len(self.layout.fields)
 
 
+@dataclass(frozen=True)
+class PointProperties(Mapping[str, Any]):
+    """Immutable element/material-point properties prepared before solution."""
+
+    entries: tuple[tuple[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        names = [name for name, _value in self.entries]
+        if len(names) != len(set(names)):
+            raise ValueError("point-property names must be unique")
+
+    def __getitem__(self, name: str) -> Any:
+        for candidate, value in self.entries:
+            if candidate == name:
+                return value
+        raise KeyError(name)
+
+    def __iter__(self) -> Iterator[str]:
+        return (name for name, _value in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
 PropertyValidator = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 MaterialRoutine = Callable[[Any], Any]
 

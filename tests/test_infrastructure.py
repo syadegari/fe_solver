@@ -15,15 +15,21 @@ from scipy import sparse
 from fe_solver.assembly import assemble_internal, build_model, commit_trial_states
 from fe_solver.config import Deck, load_deck, mandatory_events
 from fe_solver.constraints import build_constraints, macro_deformation_function
-from fe_solver.io import HDF5ResultWriter, load_restart, write_restart
+from fe_solver.execution import ElementExecutor
+from fe_solver.io import HDF5ResultWriter, load_restart, model_identity, write_restart
 from fe_solver.mesh import read_gmsh
 from fe_solver.postprocess import write_xdmf
-from fe_solver.output_fields import TENSOR_COMPONENTS, pack_symmetric, unpack_symmetric
+from fe_solver.output_fields import (
+    TENSOR_COMPONENTS,
+    pack_symmetric,
+    resolve_material_state_output,
+    unpack_symmetric,
+)
 from fe_solver.quadrature import HEX20_POINTS, HEX8_POINTS
 from fe_solver.reporting import build_analysis_summary
 from fe_solver.shape import hex20_shape, hex8_shape
 from fe_solver.solver import _factor_kkt, run_analysis
-from fe_solver.types import ModelError, RecoverableError
+from fe_solver.types import ModelError, RecoverableError, StateField, StateLayout
 from verification.check_j2_prism import compare_prism_histories, extract_prism_history
 from verification.check_j2_necking import (
     REFERENCE_INITIAL_MIDDLE_RADIUS,
@@ -43,6 +49,78 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class MeshConstraintTests(unittest.TestCase):
+    def test_element_point_properties_load_by_gmsh_tag(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8.toml")
+        mesh = read_gmsh(original.resolve(original.data["mesh"]["file"]))
+        tags = np.asarray(sorted(mesh.elements), dtype=np.int64)
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = Path(directory) / "point_properties.h5"
+            with h5py.File(source_path, "w") as archive:
+                archive.attrs["schema_version"] = 1
+                archive.create_dataset("element_tags", data=tags[::-1])
+                properties = archive.create_group("properties")
+                properties.create_dataset("grain_id", data=(1000 + tags[::-1]))
+                properties.create_dataset(
+                    "orientation_id", data=np.arange(len(tags), dtype=np.int64)[::-1]
+                )
+            data = copy.deepcopy(original.data)
+            data["point_property_sources"] = [
+                {
+                    "name": "microstructure",
+                    "file": str(source_path),
+                    "format": "hdf5_element_properties",
+                }
+            ]
+            data["element_assignments"][0]["point_properties"] = "microstructure"
+            data["output"]["cell_properties"] = ["grain_id", "orientation_id"]
+            deck = Deck(original.path, data, original.curves)
+            model = build_model(deck, mesh)
+            block = model.blocks[0]
+            self.assertEqual(len(block.point_properties), len(block.element_tags))
+            for element_tag, point_properties in zip(
+                block.element_tags, block.point_properties
+            ):
+                assert point_properties is not None
+                self.assertEqual(
+                    point_properties["grain_id"], 1000 + int(element_tag)
+                )
+            self.assertTrue(model_identity(model))
+
+            u = np.zeros(mesh.ndof)
+            assembly = assemble_internal(model, u, u, 0.0, 0.0, False)
+            with ElementExecutor(
+                (block.material for block in model.blocks),
+                sum(len(block.connectivity) for block in model.blocks),
+                2,
+            ) as executor:
+                parallel = assemble_internal(
+                    model,
+                    u,
+                    u,
+                    0.0,
+                    0.0,
+                    False,
+                    element_executor=executor,
+                )
+            np.testing.assert_array_equal(parallel.f_int, assembly.f_int)
+            result_path = Path(directory) / "run.h5"
+            with HDF5ResultWriter(result_path, model) as writer:
+                writer.append(0.0, u, u, assembly)
+                cell = writer.file["mesh/blocks/0000/cell_properties"]
+                np.testing.assert_array_equal(
+                    cell["grain_id"], 1000 + block.element_tags
+                )
+            xdmf = write_xdmf(result_path)
+            xml = xdmf.read_text(encoding="utf-8")
+            self.assertIn(
+                'Attribute Name="grain_id" AttributeType="Scalar" Center="Cell"',
+                xml,
+            )
+            self.assertIn(
+                'Attribute Name="orientation_id" AttributeType="Scalar" Center="Cell"',
+                xml,
+            )
+
     def test_uniaxial_rotation_exact_between_events(self) -> None:
         deck = load_deck(ROOT / "examples/frame_objectivity_hex8.toml")
         entry = deck.data["constraints"]["affine"][0]
@@ -308,7 +386,93 @@ class TimeRestartTests(unittest.TestCase):
             },
         }]
         data["element_assignments"][0]["material"] = "steel"
+        data["output"]["material_state"] = [
+            {"material": "steel", "select": "plastic_metric_inverse"},
+            {"material": "steel", "select": "equivalent_plastic_strain"},
+        ]
         return data
+
+    def test_material_state_output_is_opt_in_and_restart_remains_complete(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8_fbar.toml")
+        data = self.j2_data(original)
+        data["output"].pop("material_state")
+        deck = Deck(original.path, data, original.curves)
+        mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
+        model = build_model(deck, mesh)
+        model.blocks[0].state_n[..., 6] = 0.125
+        u = np.zeros(mesh.ndof)
+        assembly = assemble_internal(model, u, u, 0.0, 0.0, False)
+        with tempfile.TemporaryDirectory() as directory:
+            result_path = Path(directory) / "result.h5"
+            restart_path = Path(directory) / "restart.h5"
+            with HDF5ResultWriter(result_path, model) as writer:
+                writer.append(0.0, u, u, assembly)
+                self.assertEqual(
+                    list(writer.file["results/blocks/0000/state"]), []
+                )
+            write_restart(
+                restart_path,
+                model,
+                0.0,
+                0.1,
+                u,
+                np.zeros(build_constraints(deck, mesh).C.shape[0]),
+            )
+            with h5py.File(restart_path, "r") as archive:
+                np.testing.assert_array_equal(
+                    archive["material_state/0000"], model.blocks[0].state_n
+                )
+
+    def test_material_state_selector_uses_declared_zero_based_components(self) -> None:
+        class MaterialStub:
+            state_layout = StateLayout(
+                (
+                    StateField(
+                        "internal_variables", (6,), tuple(str(i) for i in range(6))
+                    ),
+                )
+            )
+
+        resolved = resolve_material_state_output(
+            {
+                "material_state": [
+                    {
+                        "material": "ferrite",
+                        "select": "internal_variables[1]",
+                    },
+                    {
+                        "material": "ferrite",
+                        "select": "internal_variables[2..4]",
+                        "name": "hardening",
+                    },
+                    {
+                        "material": "ferrite",
+                        "select": "internal_variables[5,0]",
+                        "name": "edge_components",
+                    },
+                ]
+            },
+            {"ferrite": MaterialStub()},  # type: ignore[arg-type]
+        )["ferrite"]
+        self.assertEqual(resolved[0].name, "internal_variables[1]")
+        self.assertEqual(resolved[0].component_indices, (1,))
+        self.assertEqual(resolved[0].shape, ())
+        self.assertEqual(resolved[1].component_indices, (2, 3, 4))
+        self.assertEqual(resolved[1].component_order, ("2", "3", "4"))
+        self.assertEqual(resolved[2].component_indices, (5, 0))
+
+        with self.assertRaisesRegex(ModelError, "requires a name"):
+            resolve_material_state_output(
+                {
+                    "material_state": [
+                        {
+                            "material": "ferrite",
+                            "select": "internal_variables[1..3]",
+                        }
+                    ]
+                },
+                {"ferrite": MaterialStub()},  # type: ignore[arg-type]
+            )
 
     def test_j2_nonzero_state_restart_round_trip(self) -> None:
         original = load_deck(ROOT / "examples/case_a_hex8_fbar.toml")
@@ -351,6 +515,78 @@ class TimeRestartTests(unittest.TestCase):
             text = xdmf.read_text(encoding="utf-8")
             self.assertIn('Name="state_plastic_metric_inverse" AttributeType="Matrix"', text)
             self.assertIn('Name="component_order" Value="11,22,33,12,23,13"', text)
+
+    def test_material_state_output_slices_and_aliases(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8_fbar.toml")
+        data = self.j2_data(original)
+        data["output"]["material_state"] = [
+            {
+                "material": "steel",
+                "select": "plastic_metric_inverse[11]",
+            },
+            {
+                "material": "steel",
+                "select": "plastic_metric_inverse[22..12]",
+                "name": "selected_metric",
+            },
+            {
+                "material": "steel",
+                "select": "equivalent_plastic_strain",
+                "name": "ep",
+            },
+        ]
+        deck = Deck(original.path, data, original.curves)
+        mesh = read_gmsh(deck.resolve(deck.data["mesh"]["file"]))
+        model = build_model(deck, mesh)
+        u = np.zeros(mesh.ndof)
+        assembly = assemble_internal(model, u, u, 0.0, 0.0, False)
+        model.blocks[0].state_n[..., :6] = np.arange(6, dtype=float)
+        model.blocks[0].state_n[..., 6] = 0.25
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "selected.h5"
+            with HDF5ResultWriter(path, model) as writer:
+                writer.append(0.0, u, u, assembly)
+                state = writer.file["results/blocks/0000/state"]
+                self.assertEqual(
+                    set(state),
+                    {"plastic_metric_inverse[11]", "selected_metric", "ep"},
+                )
+                self.assertEqual(state["plastic_metric_inverse[11]"].shape[-1:], (32,))
+                self.assertEqual(state["selected_metric"].shape[-1], 3)
+                self.assertEqual(
+                    tuple(state["selected_metric"].attrs["component_order"]),
+                    ("22", "33", "12"),
+                )
+                np.testing.assert_array_equal(
+                    state["selected_metric"][0, 0], [1.0, 2.0, 3.0]
+                )
+                np.testing.assert_array_equal(state["ep"][0], 0.25)
+            xdmf = write_xdmf(path)
+            xml = xdmf.read_text(encoding="utf-8")
+            self.assertIn(
+                'Name="state_selected_metric" AttributeType="Matrix" Center="Cell"',
+                xml,
+            )
+
+    def test_result_resume_rejects_changed_material_state_output_layout(self) -> None:
+        original = load_deck(ROOT / "examples/case_a_hex8_fbar.toml")
+        selected_data = self.j2_data(original)
+        selected_deck = Deck(original.path, selected_data, original.curves)
+        mesh = read_gmsh(selected_deck.resolve(selected_deck.data["mesh"]["file"]))
+        selected_model = build_model(selected_deck, mesh)
+        unselected_data = copy.deepcopy(selected_data)
+        unselected_data["output"].pop("material_state")
+        unselected_model = build_model(
+            Deck(original.path, unselected_data, original.curves), mesh
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.h5"
+            with HDF5ResultWriter(path, selected_model):
+                pass
+            with self.assertRaisesRegex(
+                ModelError, "material-state output layout mismatch"
+            ):
+                HDF5ResultWriter(path, unselected_model, resume=True)
 
     def test_mixed_periodic_output_routes_state_and_recovers_average_F(self) -> None:
         original = load_deck(

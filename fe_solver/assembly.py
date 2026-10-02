@@ -11,6 +11,8 @@ from .elements import evaluate_element
 from .execution import ElementExecutor, ElementWorkItem
 from .materials import material_definition
 from .mesh import Mesh
+from .output_fields import StateOutputField, resolve_material_state_output
+from .point_properties import load_point_property_sources
 from .quadrature import HEX20_POINTS, HEX20_WEIGHTS, HEX8_POINTS, HEX8_WEIGHTS
 from .shape import hex20_shape, hex8_shape
 from .types import (
@@ -19,6 +21,7 @@ from .types import (
     MaterialDefinition,
     MaterialInitRequest,
     ModelError,
+    PointProperties,
     RecoverableError,
 )
 
@@ -30,6 +33,7 @@ class ElementBlock:
     material: MaterialDefinition
     element_tags: np.ndarray
     connectivity: np.ndarray
+    point_properties: tuple[PointProperties | None, ...]
     state_n: np.ndarray
 
 
@@ -38,6 +42,8 @@ class FEModel:
     mesh: Mesh
     blocks: list[ElementBlock]
     deck: Deck
+    state_output: dict[str, tuple[StateOutputField, ...]]
+    cell_property_output: tuple[str, ...]
 
 
 @dataclass
@@ -59,12 +65,13 @@ class AssemblyTiming:
 def build_model(deck: Deck, mesh: Mesh) -> FEModel:
     materials: dict[str, MaterialDefinition] = {}
     for entry in deck.data["materials"]:
-        definition = material_definition(entry)
+        definition = material_definition(entry, base_directory=deck.root)
         if definition.name in materials:
             raise ModelError(f"duplicate material name {definition.name!r}")
         materials[definition.name] = definition
     claimed: dict[int, str] = {}
     blocks: list[ElementBlock] = []
+    property_sources = load_point_property_sources(deck)
     t0 = float(deck.data["analysis"]["t_start"])
     for assignment in deck.data["element_assignments"]:
         region = str(assignment["region"])
@@ -77,6 +84,30 @@ def build_model(deck: Deck, mesh: Mesh) -> FEModel:
         if material_name not in materials:
             raise ModelError(f"element assignment references unknown material {material_name!r}")
         tags = mesh.volume_groups[region]
+        source_name = assignment.get("point_properties")
+        if source_name is None:
+            element_properties: tuple[PointProperties | None, ...] = tuple(
+                None for _tag in tags
+            )
+        else:
+            source_name = str(source_name)
+            try:
+                source = property_sources[source_name]
+            except KeyError as exc:
+                raise ModelError(
+                    f"element assignment references unknown point-property source {source_name!r}"
+                ) from exc
+            missing_property_tags = [
+                int(tag) for tag in tags if int(tag) not in source.by_element_tag
+            ]
+            if missing_property_tags:
+                raise ModelError(
+                    f"point-property source {source_name!r} is missing "
+                    f"{len(missing_property_tags)} element(s) assigned to region {region!r}"
+                )
+            element_properties = tuple(
+                source.by_element_tag[int(tag)] for tag in tags
+            )
         connections: list[np.ndarray] = []
         for tag_raw in tags:
             tag = int(tag_raw)
@@ -106,7 +137,12 @@ def build_model(deck: Deck, mesh: Mesh) -> FEModel:
                 for g, xi in enumerate(init_points):
                     N, _ = init_shape(xi)
                     init = material.model.initialize(
-                        MaterialInitRequest(material.properties, None, N @ mesh.X[conn], t0)
+                        MaterialInitRequest(
+                            material.properties,
+                            element_properties[e],
+                            N @ mesh.X[conn],
+                            t0,
+                        )
                     )
                     if not init.status.ok:
                         raise ModelError(init.status.message)
@@ -115,11 +151,54 @@ def build_model(deck: Deck, mesh: Mesh) -> FEModel:
                             f"initializer for {material.model_root!r} returned the wrong state size"
                         )
                     state[e, g] = init.state0
-        blocks.append(ElementBlock(region, formulation, materials[material_name], tags.copy(), connectivity, state))
+        blocks.append(
+            ElementBlock(
+                region,
+                formulation,
+                materials[material_name],
+                tags.copy(),
+                connectivity,
+                element_properties,
+                state,
+            )
+        )
     missing = set(mesh.elements) - set(claimed)
     if missing:
         raise ModelError(f"{len(missing)} solid elements have no element assignment")
-    return FEModel(mesh, blocks, deck)
+    state_output = resolve_material_state_output(deck.data["output"], materials)
+    assigned_materials = {block.material.name for block in blocks}
+    for material_name, selections in state_output.items():
+        if selections and material_name not in assigned_materials:
+            raise ModelError(
+                f"material-state output references unassigned material {material_name!r}"
+            )
+    raw_cell_output = deck.data["output"].get("cell_properties", [])
+    if not isinstance(raw_cell_output, list) or any(
+        not isinstance(name, str) for name in raw_cell_output
+    ):
+        raise ModelError("output.cell_properties must be an array of property names")
+    cell_property_output = tuple(raw_cell_output)
+    if len(cell_property_output) != len(set(cell_property_output)):
+        raise ModelError("output.cell_properties contains duplicate names")
+    for property_name in cell_property_output:
+        if not property_name.isidentifier():
+            raise ModelError(f"invalid output cell-property name {property_name!r}")
+        present = False
+        for block in blocks:
+            availability = tuple(
+                properties is not None and property_name in properties
+                for properties in block.point_properties
+            )
+            if any(availability) and not all(availability):
+                raise ModelError(
+                    f"cell property {property_name!r} is incomplete in region {block.region!r}"
+                )
+            present = present or any(availability)
+        if not present:
+            raise ModelError(
+                f"output requests unknown cell property {property_name!r}"
+            )
+    return FEModel(mesh, blocks, deck, state_output, cell_property_output)
 
 
 def element_dofs(connectivity: np.ndarray) -> np.ndarray:
@@ -157,7 +236,7 @@ def assemble_internal(
                     u_n[dofs],
                     u_trial[dofs],
                     block.state_n[e],
-                    None,
+                    block.point_properties[e],
                     t_n,
                     t_np1,
                     need_tangent,

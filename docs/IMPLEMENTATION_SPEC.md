@@ -213,7 +213,7 @@ The default cold start is the stress-free reference configuration with `u_0 = 0`
 
 The solver owns stress-measure and tangent transformations. A material returns first Piola-Kirchhoff stress and `dP/dF` only.
 
-### 5.4 Standalone material-point path driver
+### 5.3 Standalone material-point path driver
 
 Provide a solver-independent verification driver that accepts a registered material, either a target `3 x 3` deformation gradient or a callable path `F(s)`, and a positive number of equal path increments. It must call the material initializer once, advance from `s=0` to `s=1`, and commit each successful local state before the next local increment. This sequential local history is deliberate and is distinct from the global Newton rule, where every trial within one global increment starts from the same committed state.
 
@@ -306,7 +306,10 @@ When `need_tangent=true`, construct `A_alg` by applying the appendix's exact dir
 
 Required material tests cover validation and initialization, hydrostatic elastic loading, plastic consistency, elastic unloading, rotational covariance, state symmetry/positive-definiteness/unit determinant, and centered finite-difference checks of all smooth elastic and plastic tangent branches. Required element tests exercise a yielded standard Hex8 and Hex8-Fbar tangent from the same committed state. Restart and cutback tests must include a nonzero plastic state.
 
-The HDF5 result stores both state fields at element centroids. The six-component plastic metric carries the same component-order metadata as reported symmetric stress and strain. Do not store an additional J2/von-Mises stress field; it is derived from the saved Cauchy stress during postprocessing.
+The supplied J2 example decks explicitly select both state fields for HDF5 output at element centroids. Material state
+is not written implicitly merely because a model declares it. The six-component plastic metric carries the same
+component-order metadata as reported symmetric stress and strain when selected. Do not store an additional
+J2/von-Mises stress field; it is derived from the saved Cauchy stress during postprocessing.
 
 The J2 numeric return-map kernel is always compiled with the required Numba
 dependency.  The production material path has no interpreted-backend selector.
@@ -1121,6 +1124,43 @@ material = "matrix"
 
 The assignment `region` must name a 3D Gmsh Physical Group.
 
+An assignment may additionally name an immutable element-property source:
+
+```toml
+[[point_property_sources]]
+name = "microstructure"
+file = "microstructure_properties.h5"
+format = "hdf5_element_properties"
+
+[[element_assignments]]
+region = "ferrite"
+formulation = "hex8_fbar"
+material = "ferrite"
+point_properties = "microstructure"
+```
+
+Point-property HDF5 schema version 1 contains a unique one-dimensional integer dataset `/element_tags` and a
+`/properties` group. Every numeric property dataset has the same first dimension as `element_tags`; remaining
+dimensions belong to one element value. Resolve rows by retained Gmsh element tag, not by row order or dense internal
+element index. Reject missing assigned tags, duplicate tags, nonnumeric values, non-finite floating-point values, and
+inconsistent row counts during preprocessing. Extra source rows may support another assignment using the same source.
+
+The prepared model passes the immutable property mapping to every integration-point initialization and update for that
+element. Process workers receive the same element-local mapping. Point properties are included in restart/model
+compatibility identity but are not evolving state and are never committed or rolled back.
+
+Static element properties are opt-in result fields:
+
+```toml
+[output]
+cell_properties = ["grain_id", "orientation_id"]
+```
+
+A requested property may be absent from an entire block, but may not be present for only some elements of one block.
+It must exist in at least one block. Store selected values once under
+`/mesh/blocks/<block>/cell_properties/<name>` and expose them as cell-centered XDMF attributes at every time without
+copying them into each accepted state.
+
 ### 20.2 Prescribed displacement
 
 A named boundary group expands into one constraint row per selected nodal component.
@@ -1243,6 +1283,7 @@ The required schema is logically:
 /mesh/node_tags                               [n_node]
 /mesh/blocks/<block>/connectivity             [n_elem, n_node_per_elem]
 /mesh/blocks/<block>/element_tags             [n_elem]
+/mesh/blocks/<block>/cell_properties/<name>   [n_elem, *property_shape]
 /materials/<material>                         model/properties/state-layout metadata
 /curves/<curve>/{time,value}
 /results/time                                 [n_step]
@@ -1251,7 +1292,7 @@ The required schema is logically:
 /results/blocks/<block>/cauchy_stress         [n_step, n_elem, 6]
 /results/blocks/<block>/green_lagrange_strain [n_step, n_elem, 6]
 /results/blocks/<block>/euler_almansi_strain  [n_step, n_elem, 6]
-/results/blocks/<block>/state/<field>         [n_step, n_elem, *field_shape]
+/results/blocks/<block>/state/<selected-name> [n_step, n_elem, *selected_shape]
 ```
 
 Block metadata identifies its region, material definition, and formulation; material metadata stores the immutable
@@ -1260,6 +1301,41 @@ cell. Store curves so reported fields can be correlated with prescribed historie
 `-C.T @ lambda` (the constraint-on-structure sign) because they support equilibrium audits, boundary resultants, and
 later RVE homogenization. Newton residuals,
 tolerances, cutback attempts, and verification summaries belong in the standalone JSON run log, not the field database.
+
+Material-state result fields are opt-in and independent of the complete constitutive state required for integration
+and restart. With no `[[output.material_state]]` entries, write no time-dependent material-state values. The material
+metadata still records the complete declared `StateLayout`. Each explicit entry is scoped to a named material
+definition:
+
+```toml
+[[output.material_state]]
+material = "voce_matrix"
+select = "equivalent_plastic_strain"
+
+[[output.material_state]]
+material = "future_phase"
+select = "internal_variables[8]"
+name = "accumulated_slip"
+
+[[output.material_state]]
+material = "future_phase"
+select = "internal_variables[12..31]"
+name = "slip_resistance"
+```
+
+The selector grammar is deliberately limited to `field`, `field[component]`, `field[first..last]`, and
+`field[component1,component2,...]`; do not evaluate Python or another general expression language. Components match
+the field's declared `component_order`. Ranges are inclusive and follow that declared order. Solver-native vector
+interfaces use zero-based component labels; a wrapper for a one-based external material ABI performs that translation
+privately. Only rank-one fields with declared component labels may be sliced. A full field keeps its declared name and
+a singleton slice keeps its selector text unless `name` is supplied. A range or multi-component selection requires an
+explicit output name. Reject unknown materials, fields, components, reversed ranges, duplicate components, and
+duplicate output names during preprocessing.
+
+Store the source field, selector, selected component labels, material, and output alias as result metadata. The
+resolved selection is part of the results-database layout: reject in-place resume when it differs from the existing
+database. It does not enter constitutive/restart identity and never reduces the complete state saved in a restart
+artifact.
 
 `resolved_input_json` and the root `git_commit` describe the cold-start input and revision. The variable-length
 `input_segments_json` array records the revision, resolved input, and accepted-state start time governing each

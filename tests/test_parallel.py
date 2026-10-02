@@ -138,6 +138,7 @@ class ElementProcessAssemblyTests(unittest.TestCase):
                 original.material,
                 original.element_tags[:split],
                 original.connectivity[:split],
+                original.point_properties[:split],
                 original.state_n[:split].copy(),
             ),
             ElementBlock(
@@ -146,6 +147,7 @@ class ElementProcessAssemblyTests(unittest.TestCase):
                 stiff,
                 original.element_tags[split:],
                 original.connectivity[split:],
+                original.point_properties[split:],
                 original.state_n[split:].copy(),
             ),
         ]

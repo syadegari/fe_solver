@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from types import MappingProxyType
 
 import numpy as np
@@ -216,13 +217,16 @@ register_material_model(
 )
 
 
-def material_definition(data: dict) -> MaterialDefinition:
+def material_definition(
+    data: dict, *, base_directory: Path | None = None
+) -> MaterialDefinition:
     root = str(data["model"])
     model = get_material_model(root)
     if "properties" in data and "parameters" in data:
         raise ModelError("a material cannot define both properties and legacy parameters")
     raw_properties = data.get("properties", data.get("parameters", {}))
-    properties = MappingProxyType(dict(model.validate_properties(dict(raw_properties))))
+    properties = model.validate_properties(dict(raw_properties))
+    properties = MappingProxyType(dict(properties))
     return MaterialDefinition(str(data["name"]), model, properties)
 
 
