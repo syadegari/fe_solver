@@ -1,13 +1,12 @@
 # Multiphase TRIP interface refinements
 
-Status: the adapter cleanup and solver-owned committed-state observation are implemented. Direct-angle inputs are
-proposals, not supported inputs yet. This document records the audit and decisions needed before changing the
-constitutive boundary; implemented requirements remain in `IMPLEMENTATION_SPEC.md`.
+Status: adapter cleanup, solver-owned committed-state observation, and runtime Euler angles are implemented.
+This document records the audit and decisions; executable requirements remain in `IMPLEMENTATION_SPEC.md`.
 
 ## Implemented adapter cleanup
 
-- Initialization validates phase and orientation assignment even though the returned orientation ID is unused by
-  `SDVINI`. A comment explains this deliberate validation.
+- Initialization validates phase and the Euler-angle vector even though orientation is unused by `SDVINI`.
+  A comment explains this deliberate validation.
 - Library loading is already cached per process; hashing is not repeated per quadrature-point update.
 - The common `need_tangent` flag stops at the Python TRIP wrapper. The legacy kernel always calculates its tangent,
   so ABI version 3 removes the unused argument. The wrapper still returns `A_alg=None` when not requested.
@@ -16,7 +15,7 @@ constitutive boundary; implemented requirements remain in `IMPLEMENTATION_SPEC.m
   primary variables appear in the returned tuple and why independent stress history, if needed by a material, belongs
   in that material's declared state.
 
-## Proposal: runtime Euler angles, two phase definitions
+## Implemented: runtime Euler angles, two phase definitions
 
 Keep the current two material definitions and the existing point-property source. No new grain registry, property
 inheritance, or material-model hierarchy is needed. The relevant TOML remains:
@@ -79,11 +78,13 @@ Flow from source data to UMAT:
 Keep the existing `ROTATIONMATRIX` convention exactly: radians, `RM = R3 R2 R1` with the current matrices/signs. These
 are immutable initial grain orientations; evolving lattice/constitutive quantities remain internal state.
 
-A single compiled library can then serve all the domains using these same constitutive constants. Remove orientation
-counts and domain/catalog-specific compilation from the bridge and builder. Keep the ABI version/state-size checks,
-phase dispatch, library identity, and input shape/finiteness checks: those are unrelated to catalog lookup.
+A single compiled library serves all domains using these same constitutive constants. ABI version 4 removes
+orientation counts and domain/catalog-specific compilation from the bridge and builder. ABI version/state-size checks,
+phase dispatch, library identity, and input shape/finiteness checks remain: those are unrelated to catalog lookup.
+Existing property files need regeneration to include `euler_angles`, and older libraries need rebuilding. The TOML
+structure remains unchanged. Old restart identities are not interchangeable with the new library/property identity.
 
-### Alternative: angles inside grain-specific TOML material definitions
+### Considered alternative (not implemented): grain-specific TOML material definitions
 
 If angles should be directly visible in TOML, they belong to each grain's immutable material definition:
 
@@ -104,8 +105,38 @@ material = "ferrite_grain_9"
 Here the generator creates per-grain Physical Groups, and the wrapper reads `request.properties["euler_angles"]`.
 The remaining flow through the ABI is identical. This needs more definitions and assignments, plus a separate phase
 grouping decision for visualization: currently each assignment produces its own output block. It does not duplicate
-the constitutive model itself. Choose one storage convention before implementation rather than supporting both
-paths without a concrete need.
+the constitutive model itself. The selected implementation uses the existing point-property source only; this
+alternative is recorded for context, not as a supported deck format.
+
+### Runtime-angle verification
+
+Catalog-based ABI-3 libraries were built from companion checkpoint `fcf6b9c` before replacing the interface.
+The same ABI-4 library was then used with the 8A/56F, 1A/7F, and 12A/88F inputs:
+
+- All 172 source orientation triples were checked in a small elastic mixed-deformation update.
+- Each dataset/phase's first orientation was also checked through 50 sequential shear updates to `F12=0.02`
+  and 50 isochoric tensile updates to stretch `1.01`, including evolved constitutive state.
+- At identical effective angles, all 772 endpoint comparisons returned bitwise-identical `P`, `dP/dF`, and state.
+  This checks orientation plumbing against the unchanged integration algorithm, not the general consistency of
+  its active-topology tangent through arbitrary branch changes.
+- Generated 4³ property files for all three domains retained exact float64 source triples for each classified
+  `(phase_id,grain_id)`, with phase element counts respectively 57/7, 55/9, and 54/10 (ferrite/austenite).
+
+The old catalogs use unqualified decimal literals: gfortran rounds these to default real before assigning the
+double-precision angle variables. The bitwise comparison therefore supplied that old effective rounding explicitly
+to ABI-4. Production preprocessing instead retains the source decimals directly as float64, as agreed. In the 172
+small elastic updates, this precision correction changed individual `P`, `dP/dF`, and state components by at most
+`3.47e-9`, `1.64e-5`, and `9.50e-11`, respectively, in the kernel's units. These are observed absolute differences
+for that check, not general error tolerances or bounds on long nonlinear trajectories.
+
+Maintained tests cover float64/D-exponent parsing, malformed angle rejection, exact angle-buffer transfer,
+orientation-ID independence, process routing, and orientation-dependent responses for both phases. The solver
+suite passed 71 tests with one existing unavailable-SuperLU_MT skip; the companion suite passed six tests.
+
+With source-precision runtime angles, the two-phase 8A/56F 4³ periodic smoke solve accepted two increments of
+`dt=0.001` to `t=0.002` (`F12=0.0004`). Its raw kinematic average-`F` error was `1.56e-15`, and its force-balance
+residual was `1.51e-10`. Cold-start stress was zero. Both phases also passed the one-element cold/resumed comparison
+described below with the runtime-angle library. These bounded checks do not replace later finite-load TRIP studies.
 
 ## Zero-duration audit
 
@@ -147,7 +178,7 @@ The native probe is retained in the companion repository as `verification/zero_i
 repository, a reproduction sequence is:
 
 ```bash
-conda run --no-capture-output -n py3.14 python build_bridge.py 8A56F \
+conda run --no-capture-output -n py3.14 python build_bridge.py \
   --output build/zero_duration_audit/libmultiphase_trip.so
 gfortran -O0 -g -ffpe-trap=invalid,zero,overflow \
   verification/zero_increment_probe.f90 build/zero_duration_audit/libmultiphase_trip.so \

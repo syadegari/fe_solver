@@ -30,14 +30,14 @@ CP_INVALID_DEFORMATION = 5
 CP_NONFINITE_STATE = 6
 CP_NONFINITE_RESPONSE = 7
 
-_ABI_VERSION = 3
+_ABI_VERSION = 4
 _PHASES = {
     "bcc": (1, 93),
     "fcc": (2, 151),
 }
 _STATUS_MESSAGES = {
     CP_INVALID_STATE_SIZE: "invalid multiphase TRIP state size",
-    CP_INVALID_ORIENTATION: "crystal orientation ID is outside the compiled catalog",
+    CP_INVALID_ORIENTATION: "multiphase TRIP Euler angles must be finite",
     CP_INVALID_TIME: "invalid multiphase TRIP increment times",
     CP_INVALID_DEFORMATION: "invalid multiphase TRIP deformation gradient",
     CP_NONFINITE_STATE: "non-finite committed multiphase TRIP state",
@@ -64,8 +64,6 @@ class _TRIPLibrary:
             "cp_abi_version",
             "cp_bcc_state_size",
             "cp_fcc_state_size",
-            "cp_bcc_orientation_count",
-            "cp_fcc_orientation_count",
         )
         try:
             for name in scalar_names:
@@ -79,7 +77,7 @@ class _TRIPLibrary:
                 update = getattr(self.handle, f"cp_{phase}_update")
                 update.argtypes = [
                     ctypes.c_int,
-                    ctypes.c_int,
+                    _VECTOR,
                     ctypes.c_double,
                     ctypes.c_double,
                     _VECTOR,
@@ -106,19 +104,10 @@ class _TRIPLibrary:
                 raise ModelError(
                     f"multiphase TRIP {phase} library state size is {reported}, expected {state_size}"
                 )
-            orientation_count = getattr(
-                self.handle, f"cp_{phase}_orientation_count"
-            )()
-            if orientation_count < 1:
-                raise ModelError(
-                    f"multiphase TRIP {phase} library has no orientations"
-                )
-
-    def orientation_count(self, phase: str) -> int:
-        return int(getattr(self.handle, f"cp_{phase}_orientation_count")())
 
 
 _LIBRARIES: dict[tuple[str, str], _TRIPLibrary] = {}
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -186,49 +175,42 @@ def _load_library(properties: Mapping[str, object]) -> _TRIPLibrary:
 def _point_orientation(
     point_properties: object | None,
     phase: str,
-    orientation_count: int,
-) -> int:
+) -> np.ndarray:
     if not isinstance(point_properties, Mapping):
         raise ModelError("multiphase TRIP requires point properties")
     try:
         raw_phase = np.asarray(point_properties["phase_id"])
-        raw_orientation = np.asarray(point_properties["orientation_id"])
+        angles = np.asarray(point_properties["euler_angles"], dtype=np.float64)
     except KeyError as exc:
         raise ModelError(
-            "multiphase TRIP requires phase_id and orientation_id point properties"
+            "multiphase TRIP requires phase_id and euler_angles point properties"
         ) from exc
-    if raw_phase.shape or raw_orientation.shape:
-        raise ModelError("crystal phase and orientation IDs must be scalar")
+    if raw_phase.shape:
+        raise ModelError("multiphase TRIP phase_id must be scalar")
+    if angles.shape != (3,) or not np.all(np.isfinite(angles)):
+        raise ModelError("multiphase TRIP euler_angles must be a finite vector of shape (3,) in radians")
     phase_value = raw_phase.item()
-    orientation_value = raw_orientation.item()
     try:
         phase_id = int(phase_value)
-        orientation_id = int(orientation_value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ModelError("crystal phase and orientation IDs must be integers") from exc
-    if phase_id != phase_value or orientation_id != orientation_value:
-        raise ModelError("crystal phase and orientation IDs must be integers")
+        raise ModelError("multiphase TRIP phase_id must be an integer") from exc
+    if phase_id != phase_value:
+        raise ModelError("multiphase TRIP phase_id must be an integer")
     expected_phase, _state_size = _PHASES[phase]
     if phase_id != expected_phase:
         raise ModelError(
             f"multiphase TRIP {phase} model received phase_id={phase_id}, "
             f"expected {expected_phase}"
         )
-    if not 0 <= orientation_id < orientation_count:
-        raise ModelError(
-            f"crystal orientation_id={orientation_id} is outside 0..{orientation_count - 1}"
-        )
-    return orientation_id
+    return np.ascontiguousarray(angles)
 
 
 def _initialize(phase: str, request: MaterialInitRequest, layout: StateLayout) -> MaterialInitResponse:
     try:
         library = _load_library(request.properties)
         # Initialization does not use orientation, but validate the assignment now
-        # so an invalid phase/catalog ID fails before the first material update.
-        _point_orientation(
-            request.point_properties, phase, library.orientation_count(phase)
-        )
+        # so an invalid phase/angle vector fails before the first material update.
+        _point_orientation(request.point_properties, phase)
         state = np.empty(layout.n_state, dtype=np.float64)
         status = getattr(library.handle, f"cp_{phase}_initialize")(
             layout.n_state, state
@@ -239,7 +221,7 @@ def _initialize(phase: str, request: MaterialInitRequest, layout: StateLayout) -
                 np.empty(layout.n_state), EvaluationStatus(FailureKind.FATAL, message)
             )
         return MaterialInitResponse(state, EvaluationStatus())
-    except ModelError as exc:
+    except (ModelError, TypeError, ValueError) as exc:
         return MaterialInitResponse(
             np.empty(layout.n_state), EvaluationStatus(FailureKind.FATAL, str(exc))
         )
@@ -268,9 +250,7 @@ def _update(
         return _failure(request, FailureKind.FATAL, "invalid multiphase TRIP state layout")
     try:
         library = _load_library(request.properties)
-        orientation_id = _point_orientation(
-            request.point_properties, phase, library.orientation_count(phase)
-        )
+        angles = _point_orientation(request.point_properties, phase)
         F_n_array = np.asarray(request.F_n, dtype=np.float64)
         F_np1_array = np.asarray(request.F_np1, dtype=np.float64)
         if F_n_array.shape != (3, 3) or F_np1_array.shape != (3, 3):
@@ -285,7 +265,7 @@ def _update(
         # It only controls whether the common API returns that computed tangent.
         status = getattr(library.handle, f"cp_{phase}_update")(
             layout.n_state,
-            orientation_id,
+            angles,
             float(request.t_n),
             float(request.t_np1),
             F_n,

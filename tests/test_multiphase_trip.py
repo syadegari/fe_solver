@@ -23,11 +23,9 @@ from fe_solver.types import (
 _STUB_SOURCE = r"""
 #include <math.h>
 
-int cp_abi_version(void) { return 3; }
+int cp_abi_version(void) { return 4; }
 int cp_bcc_state_size(void) { return 93; }
 int cp_fcc_state_size(void) { return 151; }
-int cp_bcc_orientation_count(void) { return 2; }
-int cp_fcc_orientation_count(void) { return 1; }
 
 static int initialize(int expected, int n, double *state) {
     if (n != expected) return 1;
@@ -44,13 +42,13 @@ static double determinant(const double *F) {
 }
 
 static int update(
-    int expected, int orientations, int n, int orientation,
+    int expected, int n, const double *angles,
     double t_n, double t_np1, const double *F_n,
     const double *F_np1, const double *state_n, double *P, double *A,
     double *state_out) {
     (void)F_n;
     if (n != expected) return 1;
-    if (orientation < 0 || orientation >= orientations) return 2;
+    for (int i = 0; i < 3; ++i) if (!isfinite(angles[i])) return 2;
     if (!(t_np1 > t_n)) return 3;
     if (!(determinant(F_np1) > 0.0)) return 5;
     for (int i = 0; i < 9; ++i) P[i] = F_np1[i] - (i % 4 == 0 ? 1.0 : 0.0);
@@ -59,21 +57,22 @@ static int update(
         for (int I = 0; I < 3; ++I)
             A[27*i + 9*I + 3*i + I] = 1.0;
     for (int i = 0; i < n; ++i) state_out[i] = state_n[i] + 1.0;
+    for (int i = 0; i < 3; ++i) state_out[i] += angles[i];
     return 0;
 }
 
 int cp_bcc_update(
-    int n, int orientation, double t0, double t1,
+    int n, const double *angles, double t0, double t1,
     const double *F0, const double *F1, const double *state0,
     double *P, double *A, double *state1) {
-    return update(93, 2, n, orientation, t0, t1,
+    return update(93, n, angles, t0, t1,
                   F0, F1, state0, P, A, state1);
 }
 int cp_fcc_update(
-    int n, int orientation, double t0, double t1,
+    int n, const double *angles, double t0, double t1,
     const double *F0, const double *F1, const double *state0,
     double *P, double *A, double *state1) {
-    return update(151, 1, n, orientation, t0, t1,
+    return update(151, n, angles, t0, t1,
                   F0, F1, state0, P, A, state1);
 }
 """
@@ -115,7 +114,8 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
     def _initialize(self, phase: str, phase_id: int, orientation_id: int):
         definition = self._definition(phase)
         point_properties = PointProperties(
-            (("phase_id", phase_id), ("orientation_id", orientation_id))
+            (("phase_id", phase_id), ("orientation_id", orientation_id),
+             ("euler_angles", np.array([0.1, 0.2, 0.3])))
         )
         response = definition.model.initialize(
             MaterialInitRequest(
@@ -156,8 +156,8 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
         source = self.root / "old_stub.c"
         source.write_text(
             _STUB_SOURCE.replace(
+                "cp_abi_version(void) { return 4; }",
                 "cp_abi_version(void) { return 3; }",
-                "cp_abi_version(void) { return 2; }",
             ),
             encoding="utf-8",
         )
@@ -177,13 +177,13 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
         initialized = definition.model.initialize(
             MaterialInitRequest(
                 definition.properties,
-                PointProperties((("phase_id", 1), ("orientation_id", 0))),
+                PointProperties((("phase_id", 1), ("euler_angles", np.zeros(3)))),
                 np.zeros(3),
                 0.0,
             )
         )
         self.assertEqual(initialized.status.kind, FailureKind.FATAL)
-        self.assertIn("ABI version 2, expected 3; rebuild", initialized.status.message)
+        self.assertIn("ABI version 3, expected 4; rebuild", initialized.status.message)
 
     def test_initialization_update_and_trial_state(self) -> None:
         for phase, phase_id, orientation_id, size in (
@@ -211,7 +211,9 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
             self.assertTrue(response.status.ok)
             np.testing.assert_array_equal(initialized.state0, committed)
             np.testing.assert_allclose(response.P, F - np.eye(3))
-            np.testing.assert_allclose(response.state_trial.values, committed + 1.0)
+            expected_state = committed + 1.0
+            expected_state[:3] += point_properties["euler_angles"]
+            np.testing.assert_allclose(response.state_trial.values, expected_state)
             expected = np.einsum("ij,IJ->iIjJ", np.eye(3), np.eye(3))
             np.testing.assert_array_equal(response.A_alg, expected)
 
@@ -282,6 +284,36 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
             self.assertTrue(response.status.ok)
             np.testing.assert_allclose(response.f_int, 0.0, atol=1.0e-14)
             self.assertIsNotNone(response.K)
+
+    def test_angles_are_required_and_orientation_id_is_only_metadata(self) -> None:
+        definition = self._definition("bcc")
+        for properties in (
+            {"phase_id": 1, "orientation_id": 0},
+            {"phase_id": 1, "euler_angles": np.zeros(2)},
+            {"phase_id": 1, "euler_angles": np.zeros((1, 3))},
+            {"phase_id": 1, "euler_angles": [0., np.nan, 0.]},
+        ):
+            initialized = definition.model.initialize(
+                MaterialInitRequest(definition.properties, properties, np.zeros(3), 0.)
+            )
+            self.assertEqual(initialized.status.kind, FailureKind.FATAL)
+        # No catalog size or orientation ID is involved in the constitutive call.
+        angles = np.array([0.12345678901234567, -0.4, 5.2], dtype=np.float64)
+        properties = {"phase_id": 1, "euler_angles": angles}
+        initialized = definition.model.initialize(
+            MaterialInitRequest(definition.properties, properties, np.zeros(3), 0.)
+        )
+        self.assertTrue(initialized.status.ok)
+        request = MaterialRequest(
+            np.eye(3), np.eye(3), definition.state_layout.view(initialized.state0),
+            definition.properties, properties, 0., .1, True,
+        )
+        response = definition.model.update(request)
+        self.assertTrue(response.status.ok)
+        np.testing.assert_array_equal(response.state_trial.values[:3], initialized.state0[:3] + 1. + angles)
+        properties["orientation_id"] = 999999
+        metadata_response = definition.model.update(request)
+        np.testing.assert_array_equal(metadata_response.state_trial.values, response.state_trial.values)
 
 
 if __name__ == "__main__":

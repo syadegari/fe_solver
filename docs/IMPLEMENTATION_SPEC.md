@@ -225,14 +225,19 @@ The solver owns stress-measure and tangent transformations. A material returns f
 
 ### 5.3 External multiphase TRIP ABI
 
-The non-public multiphase TRIP steel implementation is built as a domain-specific shared library because its ferrite and
-austenite orientation catalogs are fixed-name Fortran include files. A build must name the domain directory explicitly,
-validate consecutive one-based catalog branches, and embed both orientation counts in the library. The solver-facing
-orientation property remains zero-based; the ABI bridge alone converts it to the legacy one-based `MaterialID`.
+The non-public multiphase TRIP steel implementation is built as a domain-independent shared library. Orientation
+catalogs are preprocessing inputs, not compiler includes. Parse each literal angle triple directly into float64
+radians, preserving the explicit mapping from `(phase_id, grain_id)` to phase-local catalog entry. Write immutable
+`euler_angles[n_element,3]` into the generic point-property HDF5 source. Retain zero-based `orientation_id` only as
+optional diagnostic metadata; it does not select constitutive properties at runtime. No orientation counts are
+compiled into or exposed by the library.
 
-ABI version 3 exports separate BCC/ferrite and FCC/austenite initializer and update functions. Their state sizes are
+ABI version 4 exports separate BCC/ferrite and FCC/austenite initializer and update functions. Their state sizes are
 exactly 93 and 151 doubles. Updates receive `F_n`, `F_np1`, committed state, endpoint times,
-and zero-based orientation ID. They return first Piola--Kirchhoff stress, complete
+and a contiguous three-double Euler-angle buffer. The bridge supplies `props(1:3)` with `nprops=3`; phase routines
+pass these angles directly to the existing `ROTATIONMATRIX`. Preserve its radians, angle order, signs, and
+`RM=R3 R2 R1` convention without reinterpretation. These are immutable initial orientations, not lattice evolution
+history. Updates return first Piola--Kirchhoff stress, complete
 trial state, and `dP/dF`. The bridge copies committed state before entering the legacy kernel.
 The bridge sets temperature to the compiled `Theta0` constant from `constants.for` (currently 300 K) and sets its
 increment to zero. Temperature is absent from the C ABI, material properties, and deck-generation options. Changing
@@ -246,7 +251,7 @@ P[3*i + I]
 A[27*i + 9*I + 3*j + J] = dP[i,I]/dF[j,J]
 ```
 
-Reject invalid state sizes, orientation IDs, endpoint times, non-finite state, non-finite responses, and
+Reject invalid state sizes, non-finite Euler angles, endpoint times, non-finite state, non-finite responses, and
 deformation gradients with nonpositive determinant at the ABI boundary. The current legacy routine constructs its
 tangent unconditionally: stop `need_tangent` at the Python wrapper, do not pass it into the C/Fortran ABI, and return
 `A_alg=None` when the common API does not request a tangent. Some internal legacy `STOP` paths remain
@@ -259,9 +264,10 @@ path as public metadata, add the library SHA-256 to material/model identity, and
 path private to runtime properties. Each process worker loads and caches its own library handle lazily.
 
 The BCC and FCC state layouts each contain one neutral rank-one field named `internal_variables`, with respectively 93
-and 151 zero-based component labels. Initialization and every update require scalar `phase_id` and `orientation_id`
-point properties. Enforce `phase_id=1` for BCC/ferrite and `phase_id=2` for FCC/austenite, and validate the orientation
-against the count compiled into the selected library. ABI setup/configuration failures are fatal; invalid trial
+and 151 zero-based component labels. Initialization and every update require scalar `phase_id` and finite
+`euler_angles` of shape `(3,)` in point properties. Enforce `phase_id=1` for BCC/ferrite and `phase_id=2` for
+FCC/austenite. Initialization validates the assignment even though `SDVINI` does not use orientation. ABI
+setup/configuration failures are fatal; invalid trial
 kinematics and non-finite local responses are recoverable so the increment controller may cut back.
 
 ### 5.4 Standalone material-point path driver

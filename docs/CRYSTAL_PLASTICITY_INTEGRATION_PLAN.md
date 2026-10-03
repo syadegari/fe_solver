@@ -48,8 +48,10 @@ The available input families confirm the phase-local numbering convention withou
 | 8A/56F | 1--8 / 1--8 | 9--64 / 1--56 |
 | 12A/88F | 1--12 / 1--12 | 13--100 / 1--88 |
 
-The preprocessor will nevertheless construct and save the explicit mapping and expose zero-based orientation IDs to
-the Python solver instead of assuming a fixed offset or phase count.
+The preprocessor constructs and saves the explicit mapping instead of assuming a fixed offset or phase count.
+Source Euler-angle triples are parsed directly into float64 radians and stored as per-element `euler_angles`.
+Zero-based orientation IDs remain diagnostic metadata only. The same compiled library accepts all domains through
+runtime angle buffers; orientation files are no longer compiler inputs.
 
 ## Implementation stages
 
@@ -64,13 +66,17 @@ the Python solver instead of assuming a fixed offset or phase count.
 - [x] Define and build the phase-specific multiphase TRIP wrapper ABI.
 - [x] Register ferritic and austenitic models with `internal_variables` layouts of 93 and 151 entries respectively;
   their public component labels are zero-based.
+- [x] Replace compiled orientation catalogs with runtime float64 Euler angles, retaining the existing rotation convention.
 - [x] Separate cold-start/restart observation from evolution; save accepted Gauss-point stress for reporting and
   evaluate all solver constitutive trials over positive-time increments.
-- [ ] Add material-point stress/tangent/state verification before an FE solve.
-- [ ] Run a bounded periodic FE smoke case, then prepare larger runs only after local verification passes.
+- [x] Check material-point stress/tangent/state against the catalog-based kernel, including evolved shear/tension
+  paths; retain the small elastic tangent/tensor-order check. This verifies the interface, not arbitrary active-set
+  transitions in the black-box model.
+- [x] Run a bounded periodic FE smoke case with both phases and runtime angles.
+- [ ] Agree on finite-load material characterization and larger TRIP runs after the interface checks.
 
-Current interface review and blockers are recorded in `MULTIPHASE_TRIP_INTERFACE_REFINEMENT.md`. Runtime Euler angles
-are proposed but not implemented. The legacy UMAT is demonstrably unsafe at zero duration; its strict positive-time
+Current interface review and audits are recorded in `MULTIPHASE_TRIP_INTERFACE_REFINEMENT.md`. Runtime Euler angles
+use ABI version 4. The legacy UMAT is demonstrably unsafe at zero duration; its strict positive-time
 guard remains intact. FE observation now uses accepted stress, and the material-point driver's initial row reports
 initialization without calling evolution. Tangent verification uses the actual positive-time increment.
 
