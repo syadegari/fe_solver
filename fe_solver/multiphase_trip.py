@@ -30,7 +30,7 @@ CP_INVALID_DEFORMATION = 5
 CP_NONFINITE_STATE = 6
 CP_NONFINITE_RESPONSE = 7
 
-_ABI_VERSION = 2
+_ABI_VERSION = 3
 _PHASES = {
     "bcc": (1, 93),
     "fcc": (2, 151),
@@ -80,7 +80,6 @@ class _TRIPLibrary:
                 update.argtypes = [
                     ctypes.c_int,
                     ctypes.c_int,
-                    ctypes.c_int,
                     ctypes.c_double,
                     ctypes.c_double,
                     _VECTOR,
@@ -121,7 +120,6 @@ class _TRIPLibrary:
 
 _LIBRARIES: dict[tuple[str, str], _TRIPLibrary] = {}
 
-# TODO: Can this be cached? 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -161,8 +159,6 @@ def resolve_trip_properties(
     return MappingProxyType(result)
 
 
-# TODO: Should this get a lru-cache? Doesn't it try to load the library every time
-#       a call is made to gauss point?
 def _load_library(properties: Mapping[str, object]) -> _TRIPLibrary:
     try:
         path = Path(str(properties["_resolved_library"]))
@@ -170,6 +166,7 @@ def _load_library(properties: Mapping[str, object]) -> _TRIPLibrary:
     except KeyError as exc:
         raise ModelError("multiphase TRIP library properties were not resolved") from exc
     key = (str(path), expected_digest)
+    # Each process hashes and loads once; subsequent point calls use this cache.
     library = _LIBRARIES.get(key)
     if library is not None:
         return library
@@ -227,8 +224,8 @@ def _point_orientation(
 def _initialize(phase: str, request: MaterialInitRequest, layout: StateLayout) -> MaterialInitResponse:
     try:
         library = _load_library(request.properties)
-        # TODO: What does this call do here? It is not assigned to any variable
-        #       If this is not needed, are there other calls like this in the new code? 
+        # Initialization does not use orientation, but validate the assignment now
+        # so an invalid phase/catalog ID fails before the first material update.
         _point_orientation(
             request.point_properties, phase, library.orientation_count(phase)
         )
@@ -264,7 +261,6 @@ def _failure(
     )
 
 
-# TODO: why do we have `need_tangent` here? Is the underlying UMAT capable of handling that? 
 def _update(
     phase: str, request: MaterialRequest, layout: StateLayout
 ) -> MaterialResponse:
@@ -285,10 +281,11 @@ def _update(
         P = np.empty(9, dtype=np.float64)
         A = np.empty(81, dtype=np.float64)
         state_trial = np.empty(layout.n_state, dtype=np.float64)
+        # UMAT always computes dP/dF: need_tangent stops at this wrapper boundary.
+        # It only controls whether the common API returns that computed tangent.
         status = getattr(library.handle, f"cp_{phase}_update")(
             layout.n_state,
             orientation_id,
-            int(request.need_tangent),
             float(request.t_n),
             float(request.t_np1),
             F_n,

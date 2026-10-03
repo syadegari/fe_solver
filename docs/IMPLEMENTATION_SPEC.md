@@ -220,13 +220,13 @@ austenite orientation catalogs are fixed-name Fortran include files. A build mus
 validate consecutive one-based catalog branches, and embed both orientation counts in the library. The solver-facing
 orientation property remains zero-based; the ABI bridge alone converts it to the legacy one-based `MaterialID`.
 
-ABI version 2 exports separate BCC/ferrite and FCC/austenite initializer and update functions. Their state sizes are
+ABI version 3 exports separate BCC/ferrite and FCC/austenite initializer and update functions. Their state sizes are
 exactly 93 and 151 doubles. Updates receive `F_n`, `F_np1`, committed state, endpoint times,
-zero-based orientation ID, and the tangent request. They return first Piola--Kirchhoff stress, complete
+and zero-based orientation ID. They return first Piola--Kirchhoff stress, complete
 trial state, and `dP/dF`. The bridge copies committed state before entering the legacy kernel.
 The bridge sets temperature to the compiled `Theta0` constant from `constants.for` (currently 300 K) and sets its
 increment to zero. Temperature is absent from the C ABI, material properties, and deck-generation options. Changing
-the constant requires rebuilding the shared library. Reject ABI version 1 libraries before calling an update.
+the constant requires rebuilding the shared library. Reject older ABI versions before calling an update.
 
 Flat tensor buffers use C row-major indexing:
 
@@ -238,9 +238,9 @@ A[27*i + 9*I + 3*j + J] = dP[i,I]/dF[j,J]
 
 Reject invalid state sizes, orientation IDs, endpoint times, non-finite state, non-finite responses, and
 deformation gradients with nonpositive determinant at the ABI boundary. The current legacy routine constructs its
-tangent unconditionally; `need_tangent=false` permits the Python wrapper to discard it but does not yet avoid its
-calculation. Some internal legacy `STOP` paths remain process-terminating rather than recoverable and must not be
-misrepresented as material status returns.
+tangent unconditionally: stop `need_tangent` at the Python wrapper, do not pass it into the C/Fortran ABI, and return
+`A_alg=None` when the common API does not request a tangent. Some internal legacy `STOP` paths remain
+process-terminating rather than recoverable and must not be misrepresented as material status returns.
 
 Register the two Python material roots `multiphase_trip_ferrite` and `multiphase_trip_austenite`. The latter includes
 austenite-to-martensite transformation and the resulting response. Both require the sole input property

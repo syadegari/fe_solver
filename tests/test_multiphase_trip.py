@@ -23,7 +23,7 @@ from fe_solver.types import (
 _STUB_SOURCE = r"""
 #include <math.h>
 
-int cp_abi_version(void) { return 2; }
+int cp_abi_version(void) { return 3; }
 int cp_bcc_state_size(void) { return 93; }
 int cp_fcc_state_size(void) { return 151; }
 int cp_bcc_orientation_count(void) { return 2; }
@@ -44,11 +44,10 @@ static double determinant(const double *F) {
 }
 
 static int update(
-    int expected, int orientations, int n, int orientation, int need_tangent,
+    int expected, int orientations, int n, int orientation,
     double t_n, double t_np1, const double *F_n,
     const double *F_np1, const double *state_n, double *P, double *A,
     double *state_out) {
-    (void)need_tangent;
     (void)F_n;
     if (n != expected) return 1;
     if (orientation < 0 || orientation >= orientations) return 2;
@@ -64,17 +63,17 @@ static int update(
 }
 
 int cp_bcc_update(
-    int n, int orientation, int tangent, double t0, double t1,
+    int n, int orientation, double t0, double t1,
     const double *F0, const double *F1, const double *state0,
     double *P, double *A, double *state1) {
-    return update(93, 2, n, orientation, tangent, t0, t1,
+    return update(93, 2, n, orientation, t0, t1,
                   F0, F1, state0, P, A, state1);
 }
 int cp_fcc_update(
-    int n, int orientation, int tangent, double t0, double t1,
+    int n, int orientation, double t0, double t1,
     const double *F0, const double *F1, const double *state0,
     double *P, double *A, double *state1) {
-    return update(151, 1, n, orientation, tangent, t0, t1,
+    return update(151, 1, n, orientation, t0, t1,
                   F0, F1, state0, P, A, state1);
 }
 """
@@ -157,8 +156,8 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
         source = self.root / "old_stub.c"
         source.write_text(
             _STUB_SOURCE.replace(
+                "cp_abi_version(void) { return 3; }",
                 "cp_abi_version(void) { return 2; }",
-                "cp_abi_version(void) { return 1; }",
             ),
             encoding="utf-8",
         )
@@ -184,7 +183,7 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
             )
         )
         self.assertEqual(initialized.status.kind, FailureKind.FATAL)
-        self.assertIn("ABI version 1, expected 2; rebuild", initialized.status.message)
+        self.assertIn("ABI version 2, expected 3; rebuild", initialized.status.message)
 
     def test_initialization_update_and_trial_state(self) -> None:
         for phase, phase_id, orientation_id, size in (
