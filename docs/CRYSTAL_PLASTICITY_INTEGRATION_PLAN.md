@@ -64,13 +64,21 @@ the Python solver instead of assuming a fixed offset or phase count.
 - [x] Define and build the phase-specific multiphase TRIP wrapper ABI.
 - [x] Register ferritic and austenitic models with `internal_variables` layouts of 93 and 151 entries respectively;
   their public component labels are zero-based.
+- [x] Separate cold-start/restart observation from evolution; save accepted Gauss-point stress for reporting and
+  evaluate all solver constitutive trials over positive-time increments.
 - [ ] Add material-point stress/tangent/state verification before an FE solve.
 - [ ] Run a bounded periodic FE smoke case, then prepare larger runs only after local verification passes.
+
+Current interface review and blockers are recorded in `MULTIPHASE_TRIP_INTERFACE_REFINEMENT.md`. Runtime Euler angles
+are proposed but not implemented. The legacy UMAT is demonstrably unsafe at zero duration; its strict positive-time
+guard remains intact. FE observation now uses accepted stress, and the material-point driver's initial row reports
+initialization without calling evolution. Tangent verification uses the actual positive-time increment.
 
 ## Output invariants
 
 - No `[[output.material_state]]` entry means no time-dependent state field in `run.h5`.
 - Restart files always contain the complete committed packed state, regardless of result selection.
+- Restart schema 3 also retains accepted Gauss-point stress for reporting, but no tangents or independent `F` history.
 - The full declared state layout remains in material metadata even when no values are selected.
 - Rank-one state slices use declared component labels; ranges are inclusive and aliases are required for multi-component
   selections.

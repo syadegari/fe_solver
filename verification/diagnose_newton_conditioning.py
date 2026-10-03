@@ -61,7 +61,7 @@ def main() -> None:
             assembly = assemble_internal(
                 prepared.model, u_n, u_trial, t_n, float(time), False
             )
-            commit_trial_states(prepared.model, assembly.state_trial)
+            commit_trial_states(prepared.model, assembly.state_trial, assembly.gauss_output)
             t_n, u_n = float(time), u_trial
             lambda_n = _recover_multipliers(
                 prepared.constraints.C, np.asarray(reactions[index]).ravel()
@@ -74,7 +74,7 @@ def main() -> None:
             prepared.model, prepared.constraints, u_n, lambda_n,
             t_n, args.committed_time, setup_history,
         )
-        commit_trial_states(prepared.model, setup.assembly.state_trial)
+        commit_trial_states(prepared.model, setup.assembly.state_trial, setup.assembly.gauss_output)
         t_n, u_n, lambda_n = args.committed_time, setup.u, setup.lambdas
         committed_state_source = "solved_from_preceding_database_state"
         committed_setup_iterations = setup.iterations

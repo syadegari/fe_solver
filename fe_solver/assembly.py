@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter_ns
 
 import numpy as np
 from scipy import sparse
 
 from .config import Deck, component_index, value_expression
-from .elements import evaluate_element
+from .elements import evaluate_element, observe_committed_element
 from .execution import ElementExecutor, ElementWorkItem
 from .materials import material_definition
 from .mesh import Mesh
@@ -35,6 +35,11 @@ class ElementBlock:
     connectivity: np.ndarray
     point_properties: tuple[PointProperties | None, ...]
     state_n: np.ndarray
+    # Accepted response cache for reporting, not input to constitutive evolution.
+    cauchy_stress_n: np.ndarray = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.cauchy_stress_n = np.zeros((*self.state_n.shape[:2], 3, 3))
 
 
 @dataclass
@@ -131,7 +136,8 @@ def build_model(deck: Deck, mesh: Mesh) -> FEModel:
         nstate = materials[material_name].state_layout.n_state
         state = np.empty((len(tags), ngauss, nstate))
         material = materials[material_name]
-        if nstate:
+        # Restart restores complete history; do not initialize and then overwrite it.
+        if nstate and not deck.data["restart"].get("restart_from", ""):
             assert material.model.initialize is not None
             for e, conn in enumerate(connectivity):
                 for g, xi in enumerate(init_points):
@@ -338,11 +344,41 @@ def assemble_external(model: FEModel, t: float) -> np.ndarray:
     return f_ext
 
 
-def commit_trial_states(model: FEModel, state_trial: list[np.ndarray]) -> None:
+def observe_committed(model: FEModel, u_n: np.ndarray) -> AssemblyResult:
+    """Recover accepted forces/fields from geometry and cached stress, without updating materials."""
+    f_int = np.zeros(model.mesh.ndof)
+    outputs: list[list[GaussOutput]] = []
+    for block in model.blocks:
+        block_output = []
+        for e, conn in enumerate(block.connectivity):
+            dofs = element_dofs(conn)
+            try:
+                local_force, output = observe_committed_element(
+                    model.mesh.X[conn], u_n[dofs], block.formulation, block.cauchy_stress_n[e]
+                )
+            except np.linalg.LinAlgError as exc:
+                raise ModelError(f"element {int(block.element_tags[e])}: singular committed geometry") from exc
+            f_int[dofs] += local_force
+            block_output.append(output)
+        outputs.append(block_output)
+    return AssemblyResult(f_int, None, [block.state_n.copy() for block in model.blocks], outputs)
+
+
+def commit_trial_states(
+    model: FEModel, state_trial: list[np.ndarray], gauss_output: list[list[GaussOutput]],
+) -> None:
     if len(state_trial) != len(model.blocks):
         raise ValueError("material-state block count mismatch")
     for block, trial in zip(model.blocks, state_trial):
         if trial.shape != block.state_n.shape:
             raise ValueError("material-state shape mismatch")
+    if len(gauss_output) != len(model.blocks):
+        raise ValueError("accepted-stress block count mismatch")
+    stresses = [np.asarray([element.cauchy_stress for element in output]) for output in gauss_output]
+    for block, stress in zip(model.blocks, stresses):
+        if stress.shape != block.cauchy_stress_n.shape or not np.all(np.isfinite(stress)):
+            raise ValueError("invalid accepted Gauss-point stress")
     for block, trial in zip(model.blocks, state_trial):
         block.state_n[...] = trial
+    for block, stress in zip(model.blocks, stresses):
+        block.cauchy_stress_n[...] = stress

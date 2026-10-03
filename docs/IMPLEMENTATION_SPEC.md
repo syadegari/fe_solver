@@ -116,6 +116,11 @@ state_trial: float64 [n_elem_block, n_gauss, n_state]
 
 Only accepted global states are committed. A new Newton iteration must never use the previous Newton iteration's trial state as its starting state.
 
+Keep a separate accepted-response cache `cauchy_stress_n[n_elem, n_gauss, 3, 3]` for reporting and
+accepted-state residual checks. Initialize it to zero for the supported stress-free cold start and replace it only
+when the corresponding trial state is accepted. This cache is not constitutive history and is not passed into the
+material update. A model requiring stress as integration history must declare it in its own state layout.
+
 ### 4.4 Named request/response records
 
 Do not use positional tuples for material or element APIs.
@@ -209,7 +214,12 @@ init_<root>(MaterialInitRequest) -> MaterialInitResponse       # optional
 update_<root>(MaterialRequest) -> MaterialResponse             # required
 ```
 
-The default cold start is the stress-free reference configuration with `u_0 = 0` and `F_0 = I`. For a history-dependent model, state is returned by its registered initializer, which may use point properties. A nonempty state layout without an initializer is a setup error. For a state-free model such as `neo_hook`, skip integration-point initialization entirely. Initial stress is zero for the required reference neo-Hookean model. A future material that supports nonzero initial stress requires an explicit extension of this contract rather than an implicit solver-side assumption.
+The default cold start is the stress-free reference configuration with `u_0 = 0`, `F_0 = I`, and zero initial stress.
+For a history-dependent model, state is returned by its registered initializer, which may use point properties.
+A nonempty state layout without an initializer is a setup error. For a state-free model such as `neo_hook`, skip
+integration-point initialization entirely. Reporting the initialized state must not call the material update.
+A future material that supports nonzero initial stress requires an explicit extension of this contract rather than
+an implicit solver-side assumption.
 
 The solver owns stress-measure and tangent transformations. A material returns first Piola-Kirchhoff stress and `dP/dF` only.
 
@@ -259,6 +269,11 @@ kinematics and non-finite local responses are recoverable so the increment contr
 Provide a solver-independent verification driver that accepts a registered material, either a target `3 x 3` deformation gradient or a callable path `F(s)`, and a positive number of equal path increments. It must call the material initializer once, advance from `s=0` to `s=1`, and commit each successful local state before the next local increment. This sequential local history is deliberate and is distinct from the global Newton rule, where every trial within one global increment starts from the same committed state.
 
 The driver records `F`, `P`, Kirchhoff and Cauchy stress, Green--Lagrange, Euler--Almansi, material and spatial logarithmic strain, packed material state, and, when requested, `dP/dF` and its current-configuration Truesdell form. These are verification arrays rather than solver HDF5 fields; recording `F` here does not change the rule that production output reconstructs `F` from nodal displacement. A state-free material skips initialization and uses an empty state.
+
+The path must begin at `F(0)=I`. Its initial row reports initialized state and zero stress without constitutive
+evolution. Requested tangent arrays contain `NaN` in that row to mark an unavailable increment-local derivative;
+all remaining rows obtain tangents from their positive-time updates. Characterization summaries exclude the initial
+tangent row rather than treating it as an elastic or algorithmic modulus.
 
 The J2 characterization utility must exercise at least 400 increments to 10% isochoric logarithmic uniaxial strain and 400 increments to `F12=0.1` simple shear, compare final values against 200-increment histories, save machine-readable arrays and CSV tables, and plot stress, equivalent plastic strain, and representative elastic/plastic tangent components.
 
@@ -762,8 +777,9 @@ quadrature point: the worker gathers all quadrature-point material updates, the 
 and the trial state into one element response. Consequently, the Hex8-Fbar centroid quantities and projection chain
 rule remain private to one element invocation and use the same material-point API as the serial path.
 
-Create a fixed pool once per analysis and reuse it for initial output, every Newton and line-search assembly, and final
-verification. `--num-processes N` is a command-line execution choice with default `N=1`; it is not part of the TOML
+Create a fixed pool once per analysis and reuse it for every Newton and line-search assembly and positive-time tangent
+verification. Startup/restart observation uses geometry and accepted stress without constitutive worker calls.
+`--num-processes N` is a command-line execution choice with default `N=1`; it is not part of the TOML
 model definition or restart identity. Never select all available CPUs implicitly. Report the requested and effective
 process counts and the available physical/logical CPU counts so the user can choose an appropriate value. The effective
 count may be reduced to the number of elements. Limit numerical-library thread pools to one thread inside each element
@@ -903,6 +919,10 @@ At every global iteration:
 - set `need_tangent=False` on material calls when no tangent refresh is needed.
 
 A new increment attempt must have a valid tangent/factorization before its first correction unless an explicit safe reuse policy is implemented.
+
+For both Newton variants, the first trial uses `u_trial=u_n` but `t_np1>t_n`. Obtain its stress and tangent from that
+positive-time integration, even though its endpoint deformation gradients initially coincide. Cold-start/restart
+reporting does not assemble a stiffness or invoke evolution at equal endpoint times.
 
 ### 16.3 Optional Newton backtracking
 
@@ -1315,6 +1335,13 @@ The solver creates one HDF5 result database per run. Append the cold-start or re
 subsequent globally converged, committed increment. A mandatory output time is therefore a solved database row;
 accepted endpoints introduced by cutback or growth control are retained as well. Never write a failed Newton trial.
 
+Write the cold-start/restart row by observing initialized/restored internal variables and cached accepted stress,
+with kinematics reconstructed from displacement. Never call constitutive evolution solely to regenerate this row.
+The same non-evolving path supplies accepted-state equilibrium/kinematic checks. For a completed positive-time
+increment, reuse its converged response. Optional element/global tangent checks run before state commit, using that
+increment's original `u_n`, state, and endpoint times for every perturbation. If no new increment is taken, explicitly
+requested tangent checks require an increment context and must report its absence rather than use a zero-time map.
+
 The required schema is logically:
 
 ```text
@@ -1420,7 +1447,7 @@ shear entries (no factor of two). Store dataset attributes `component_order` (si
 and `shear_scale=1.0`. Internal element tensors and engineering-shear assembly vectors are unchanged; pack only at
 the output boundary. Generic state fields retain their declared shape; do not assume that a future 3-by-3 state field
 is symmetric merely from its shape. Reject version-2 result databases on resume/postprocessing with a schema diagnostic;
-rerun to produce the new format. Restart schema remains version 2 because its state/kinematic contents are unchanged.
+rerun to produce the new format. Restart schema is version 3 because accepted Gauss-point stress is now included.
 
 Do not store current coordinates, deformation gradients, `J`, or algorithmic material tangents. Current coordinates
 and `F` are derived from reference coordinates and displacement. The tangent is an iteration-local linearization and
@@ -1437,7 +1464,7 @@ Cell fields are reported at the parent-element centroid without adding a constit
 
 For F-bar this recovery does not alter or bypass the formulation: stress comes from the projected material evaluations,
 while strain is explicitly a kinematic centroid quantity reconstructed from `u`. Future state variables that cannot be
-meaningfully interpolated must declare a model-specific reporting operation before being added.
+  meaningfully interpolated must declare a model-specific reporting operation before being added.
 
 Make append completion transactional at the schema level: update `n_complete_steps` only after all datasets for a row
 have been flushed. On resume, reject a damaged committed prefix and truncate any longer incomplete tail to that count.
@@ -1484,10 +1511,19 @@ next/proposed dt controller state
 u_n
 lambda_n
 committed material-state blocks
+accepted Gauss-point Cauchy-stress blocks [n_elem, n_gauss, 6]
 mesh/assignment/schema identity needed for compatibility checks
 ```
 
 Do **not** store `F_n` as authoritative history. Reconstruct it from reference coordinates and committed `u_n`.
+
+Restart schema version 3 stores `/cauchy_stress/<block>` in `[11,22,33,12,23,13]` order, with tensorial shear
+and component metadata. This is the accepted stress used by the element residual (projected-material stress for
+Hex8-Fbar), not centroidal results data. Its purpose is to reproduce restart-time reporting and residuals without
+constitutive evolution. Validate block shapes and finite values before restoring any block. Reject older restart
+schemas with an explicit version-3 requirement; do not silently fabricate stress or call a zero-duration update.
+Do not store algorithmic material tangents, element/global stiffness, or factorization objects. The first correction
+of the next positive-time increment obtains fresh trial stress and tangent from the unchanged material API.
 
 Cold start calls the registered initializer only for models with nonempty history state. Restart never initializes material points; it loads committed state after compatibility checks.
 Restart is a separate HDF5 artifact from the results database. A restart does not depend on XDMF or other

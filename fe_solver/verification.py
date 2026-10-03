@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import sparse
 
-from .assembly import FEModel, assemble_external, assemble_internal, element_dofs
+from .assembly import AssemblyResult, FEModel, assemble_external, assemble_internal, element_dofs, observe_committed
 from .constraints import ConstraintSystem, macro_deformation_function
 from .elements import evaluate_element
 from .execution import ElementExecutor
@@ -64,10 +64,20 @@ def verify_analysis(
     lambdas: np.ndarray,
     *,
     element_executor: ElementExecutor | None = None,
+    assembly: AssemblyResult | None = None,
+    u_n: np.ndarray | None = None,
+    t_n: float | None = None,
 ) -> dict[str, float]:
     options = model.deck.data.get("verification", {})
     summary: dict[str, float] = {}
-    base = assemble_internal(model, u, u, t, t, True, element_executor=element_executor)
+    check_tangent = options.get("check_element_directional_tangent", False) or options.get(
+        "check_global_directional_tangent", False
+    )
+    if check_tangent and (u_n is None or t_n is None or t <= t_n):
+        raise ModelError("tangent verification requires a positive-time increment and its original committed state")
+    base = assembly if assembly is not None else observe_committed(model, u)
+    if options.get("check_global_directional_tangent", False) and base.K is None:
+        base = assemble_internal(model, u_n, u, t_n, t, True, element_executor=element_executor)
     f_ext = assemble_external(model, t)
     r_u = base.f_int - f_ext + constraints.C.T @ lambdas
     r_c = constraints.C @ u - constraints.rhs(t)
@@ -153,24 +163,26 @@ def verify_analysis(
         direction /= _inf(direction)
         eps = 1.0e-7 * max(1.0, _inf(u[dofs]))
         request = ElementRequest(
-            model.mesh.X[conn], u[dofs], u[dofs], block.state_n[0], block.material,
-            None, t, t, True, block.formulation,
+            model.mesh.X[conn], u_n[dofs], u[dofs], block.state_n[0], block.material,
+            block.point_properties[0], t_n, t, True, block.formulation,
         )
         analytic_response = evaluate_element(request)
         if not analytic_response.status.ok:
             raise ModelError(analytic_response.status.message)
         plus = evaluate_element(
             ElementRequest(
-                model.mesh.X[conn], u[dofs], u[dofs] + eps * direction, block.state_n[0],
-                block.material, None, t, t, False, block.formulation,
+                model.mesh.X[conn], u_n[dofs], u[dofs] + eps * direction, block.state_n[0],
+                block.material, block.point_properties[0], t_n, t, False, block.formulation,
             )
         )
         minus = evaluate_element(
             ElementRequest(
-                model.mesh.X[conn], u[dofs], u[dofs] - eps * direction, block.state_n[0],
-                block.material, None, t, t, False, block.formulation,
+                model.mesh.X[conn], u_n[dofs], u[dofs] - eps * direction, block.state_n[0],
+                block.material, block.point_properties[0], t_n, t, False, block.formulation,
             )
         )
+        if not plus.status.ok or not minus.status.ok:
+            raise ModelError("element tangent perturbation failed constitutive integration")
         assert analytic_response.K is not None
         absolute, relative = _derivative_error(
             analytic_response.K @ direction, (plus.f_int - minus.f_int) / (2.0 * eps)
@@ -190,7 +202,7 @@ def verify_analysis(
 
         def residual(displacement: np.ndarray, multipliers: np.ndarray) -> np.ndarray:
             assembled = assemble_internal(
-                model, u, displacement, t, t, False, element_executor=element_executor
+                model, u_n, displacement, t_n, t, False, element_executor=element_executor
             )
             return np.concatenate(
                 [assembled.f_int - f_ext + constraints.C.T @ multipliers,

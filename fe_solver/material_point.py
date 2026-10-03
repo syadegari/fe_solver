@@ -118,40 +118,50 @@ def run_material_path(
         J = float(np.linalg.det(F))
         if J <= 0.0:
             raise ModelError(f"deformation path returned nonpositive det(F) at step {index}")
-        state_n = layout.view(state_values)
-        response = evaluate_material_point(
-            material,
-            MaterialRequest(
-                F_n, F, state_n, material.properties, point_properties,
-                float(times[index - 1]) if index else 0.0, float(time), need_tangent,
-            ),
-        )
-        if not response.status.ok:
-            error = RecoverableError if response.status.kind is FailureKind.RECOVERABLE else ModelError
-            raise error(f"material path failed at step {index}: {response.status.message}")
-        if response.state_trial.values.shape != (layout.n_state,):
-            raise ModelError("material update returned the wrong state size")
+        if index == 0:
+            if not np.array_equal(F, np.eye(3)):
+                raise ModelError("material path must start at the stress-free reference F=I")
+            # Report initialization only. No algorithmic tangent exists without
+            # an integration interval; NaN marks this unavailable verification row.
+            P = np.zeros((3, 3))
+            if need_tangent:
+                A_values[0] = np.nan
+                D_values[0] = np.nan
+        else:
+            response = evaluate_material_point(
+                material,
+                MaterialRequest(
+                    F_n, F, layout.view(state_values), material.properties, point_properties,
+                    float(times[index - 1]), float(time), need_tangent,
+                ),
+            )
+            if not response.status.ok:
+                error = RecoverableError if response.status.kind is FailureKind.RECOVERABLE else ModelError
+                raise error(f"material path failed at step {index}: {response.status.message}")
+            if response.state_trial.values.shape != (layout.n_state,):
+                raise ModelError("material update returned the wrong state size")
+            P = response.P
+            state_values = response.state_trial.values.copy()
 
-        tau = response.P @ F.T
+        tau = P @ F.T
         sigma = tau / J
         C = F.T @ F
         b = F @ F.T
         Finv = np.linalg.inv(F)
         F_values[index] = F
-        P_values[index] = response.P
+        P_values[index] = P
         tau_values[index] = tau
         sigma_values[index] = sigma
         green_values[index] = 0.5 * (C - np.eye(3))
         almansi_values[index] = 0.5 * (np.eye(3) - Finv.T @ Finv)
         material_log_values[index] = 0.5 * _symmetric_log(C)
         spatial_log_values[index] = 0.5 * _symmetric_log(b)
-        states[index] = response.state_trial.values
-        if need_tangent:
+        states[index] = state_values
+        if need_tangent and index > 0:
             assert response.A_alg is not None and A_values is not None and D_values is not None
             A_values[index] = response.A_alg
             D_values[index] = truesdell_voigt(response.A_alg, F, J, sigma)
 
-        state_values = response.state_trial.values.copy()
         F_n = F.copy()
 
     return MaterialPointHistory(

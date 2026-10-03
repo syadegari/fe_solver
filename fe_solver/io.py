@@ -11,13 +11,13 @@ import h5py
 import numpy as np
 
 from .assembly import AssemblyResult, FEModel
-from .output_fields import TENSOR_COMPONENTS, StateOutputField, pack_symmetric
+from .output_fields import TENSOR_COMPONENTS, StateOutputField, pack_symmetric, unpack_symmetric
 from .shape import hex20_shape, hex8_shape
 from .types import ModelError
 
 
 RESULT_SCHEMA_VERSION = 3
-RESTART_SCHEMA_VERSION = 2
+RESTART_SCHEMA_VERSION = 3
 
 
 def _public_material_properties(properties: Mapping[str, object]) -> dict[str, object]:
@@ -500,8 +500,16 @@ def write_restart(
         archive.create_dataset("u_n", data=u_n)
         archive.create_dataset("lambda_n", data=lambda_n)
         states = archive.create_group("material_state")
+        stresses = archive.create_group("cauchy_stress")
         for block_index, block in enumerate(model.blocks):
             states.create_dataset(f"{block_index:04d}", data=block.state_n)
+            dataset = stresses.create_dataset(
+                f"{block_index:04d}", data=pack_symmetric(block.cauchy_stress_n)
+            )
+            dataset.attrs["component_order"] = TENSOR_COMPONENTS
+            dataset.attrs["shear_convention"] = "tensorial"
+            dataset.attrs["shear_scale"] = 1.0
+            dataset.attrs["purpose"] = "accepted_response_for_reporting"
 
 
 def load_restart(path: Path, model: FEModel) -> tuple[float, float, np.ndarray, np.ndarray]:
@@ -511,18 +519,33 @@ def load_restart(path: Path, model: FEModel) -> tuple[float, float, np.ndarray, 
         raise ModelError(f"cannot read restart file {path}") from exc
     with archive:
         if int(archive.attrs.get("schema_version", -1)) != RESTART_SCHEMA_VERSION:
-            raise ModelError("unsupported restart schema version")
+            raise ModelError(
+                "unsupported restart schema version; version 3 with accepted Gauss-point stress is required"
+            )
         if str(archive.attrs.get("model_identity", "")) != model_identity(model):
             raise ModelError("restart mesh/assignment/material identity mismatch")
         u = np.asarray(archive["u_n"], dtype=float)
         lambdas = np.asarray(archive["lambda_n"], dtype=float)
-        if u.shape != (model.mesh.ndof,):
+        if u.shape != (model.mesh.ndof,) or not np.all(np.isfinite(u)):
             raise ModelError("restart displacement shape mismatch")
+        restored = []
         for block_index, block in enumerate(model.blocks):
             state = np.asarray(archive[f"material_state/{block_index:04d}"], dtype=float)
-            if state.shape != block.state_n.shape:
+            if state.shape != block.state_n.shape or not np.all(np.isfinite(state)):
                 raise ModelError("restart material state layout mismatch")
+            key = f"cauchy_stress/{block_index:04d}"
+            if key not in archive:
+                raise ModelError("restart is missing accepted Gauss-point stress")
+            if tuple(archive[key].attrs.get("component_order", ())) != TENSOR_COMPONENTS:
+                raise ModelError("restart Gauss-point stress component order mismatch")
+            packed = np.asarray(archive[key], dtype=float)
+            if packed.shape != (*block.state_n.shape[:2], 6) or not np.all(np.isfinite(packed)):
+                raise ModelError("restart Gauss-point stress layout/values mismatch")
+            stress = unpack_symmetric(packed)
+            restored.append((state, stress))
+        for block, (state, stress) in zip(model.blocks, restored):
             block.state_n[...] = state
+            block.cauchy_stress_n[...] = stress
         return (
             float(archive.attrs["t_n"]), float(archive.attrs["proposed_dt"]),
             u.copy(), lambdas.copy(),

@@ -15,6 +15,7 @@ from .assembly import (
     assemble_external,
     assemble_internal,
     commit_trial_states,
+    observe_committed,
 )
 from .config import Deck
 from .constraints import ConstraintSystem
@@ -411,6 +412,9 @@ def run_analysis(
     t_n = t_start
     restart_from = str(deck.data["restart"].get("restart_from", ""))
     if restart_from:
+        # Restore constitutive history and accepted stress for reporting in place.
+        # The next positive-time trial supplies fresh stress and its tangent;
+        # cached stress is not passed to constitutive evolution.
         t_n, proposed_dt, u_n, lambda_n = load_restart(deck.resolve(restart_from), model)
         if lambda_n.shape != (constraints.C.shape[0],):
             raise ModelError("restart multiplier shape mismatch")
@@ -520,17 +524,10 @@ def run_analysis(
             result.timing,
             result.analysis,
         )
-        initial_assembly = assemble_internal(
-            model,
-            u_n,
-            u_n,
-            t_n,
-            t_n,
-            False,
-            element_executor=executor,
-            collect_timing=debug_timing,
-        )
+        # Startup is observation, not a zero-duration constitutive increment.
+        initial_assembly = observe_committed(model, u_n)
         writer.append(t_n, u_n, np.asarray(-constraints.C.T @ lambda_n), initial_assembly)
+        final_verified = False
         while t_n < t_end - tol_time:
             future_events = events[events > t_n + tol_time]
             next_event = float(future_events[0]) if len(future_events) else t_end
@@ -568,7 +565,17 @@ def run_analysis(
                     if event_landing_below_min or proposed_dt < dt_min - tol_time:
                         raise ModelError("recoverable failure cannot be cut back without violating dt_min")
                     continue
-                commit_trial_states(model, trial.assembly.state_trial)
+                if abs(t_trial - t_end) <= tol_time:
+                    from .verification import verify_analysis
+                    # Tangent checks must use this increment's original history,
+                    # before it is overwritten by the accepted endpoint state.
+                    result.verification = verify_analysis(
+                        model, constraints, t_trial, trial.u, trial.lambdas,
+                        assembly=trial.assembly, u_n=u_n, t_n=t_n,
+                        element_executor=executor,
+                    )
+                    final_verified = True
+                commit_trial_states(model, trial.assembly.state_trial, trial.assembly.gauss_output)
                 old_t = t_n
                 t_n, u_n, lambda_n = t_trial, trial.u, trial.lambdas
                 result.increments.append(IncrementRecord(old_t, t_n, attempts, trial.iterations, cutbacks))
@@ -606,14 +613,11 @@ def run_analysis(
                 )
                 break
         from .verification import verify_analysis
-        result.verification = verify_analysis(
-            model,
-            constraints,
-            result.t,
-            result.u,
-            result.lambdas,
-            element_executor=executor,
-        )
+        if not final_verified:
+            result.verification = verify_analysis(
+                model, constraints, result.t, result.u, result.lambdas,
+                assembly=initial_assembly, element_executor=executor,
+            )
         result.timing["elapsed_wall_seconds"] = (
             elapsed_before_restart + (perf_counter_ns() - analysis_wall_start) * 1.0e-9
         )

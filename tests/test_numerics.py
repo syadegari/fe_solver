@@ -495,7 +495,11 @@ class MaterialTests(unittest.TestCase):
         self.assertTrue(np.all(np.diff(ep) >= -1.0e-14))
         np.testing.assert_allclose(fine.cauchy_stress[-1], coarse.cauchy_stress[-1], rtol=2e-5)
         np.testing.assert_allclose(fine.state[-1], coarse.state[-1], rtol=2e-4, atol=1e-10)
-        D0 = fine.spatial_truesdell_tangent[0]
+        self.assertTrue(np.all(np.isnan(fine.spatial_truesdell_tangent[0])))
+        # A held-deformation positive-time increment gives the reference elastic
+        # tangent without asking the material to integrate a zero-time interval.
+        held = run_material_path(material, np.eye(3), 1)
+        D0 = held.spatial_truesdell_tangent[1]
         mu = self.j2_properties()["shear_modulus"]
         bulk = self.j2_properties()["bulk_modulus"]
         self.assertAlmostEqual(D0[0, 0], bulk + 4.0 * mu / 3.0, places=7)

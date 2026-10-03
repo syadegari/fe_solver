@@ -120,10 +120,10 @@ def _tangent_summary(history: MaterialPointHistory) -> dict[str, dict[str, float
     }
     return {
         name: {
-            "initial": float(values[0]),
+            "first_increment": float(values[1]),
             "final": float(values[-1]),
-            "minimum": float(values.min()),
-            "maximum": float(values.max()),
+            "minimum": float(values[1:].min()),
+            "maximum": float(values[1:].max()),
         }
         for name, values in components.items()
     }

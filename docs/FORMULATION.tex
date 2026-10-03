@@ -1295,7 +1295,23 @@ At each Gauss point the solver stores a model-owned committed constitutive state
 \end{equation}
 The contents and length of $\mathcal H$ are defined by the selected constitutive model. Examples include plastic deformation gradients, slip resistances, accumulated slips, evolving lattice orientation, hardening variables, or any other history required by the finite-increment update.
 
-Geometry is kept separate from constitutive state. The committed deformation gradient $\F_n^g$ is reconstructed from the reference coordinates and committed nodal displacement $\vct u_n$ whenever the element is evaluated. Likewise, stress and tangent are material responses, not independently committed solver history unless a particular material model explicitly includes such quantities in its own state.
+Geometry is kept separate from constitutive state. The committed deformation gradient $\F_n^g$ is reconstructed from the reference coordinates and committed nodal displacement $\vct u_n$ whenever the element is evaluated. Stress and tangent are material responses, not independent constitutive history unless a particular material model explicitly includes such quantities in its own state. The accepted Gauss-point Cauchy stress is nevertheless retained as a response cache for reporting and accepted-state equilibrium checks. This cache does not enter the constitutive integration map.
+
+\subsection{Observation is not a zero-duration constitutive increment}
+
+The supported cold start is the stress-free reference state: $\vct u_0=\vct0$, $\F_0=\bs I$, and $\sig_0^g=\bs0$;
+history is supplied by material initialization. A restart restores accepted nodal and constitutive data together
+with the accepted stress response. Reporting either state reconstructs kinematics and samples the accepted stress
+and history without invoking the evolution map. The internal-force residual can likewise be reconstructed from
+the accepted stress and geometry. No material or global tangent is required for this observation, and the saved
+stress does not replace trial stress in subsequent Newton assemblies.
+
+For the first correction of the next increment, $t_{n+1}>t_n$ even when the initial guess is
+$\vct u_{n+1}^{(0)}=\vct u_n$ and hence $\F_{n+1}^{g,(0)}=\F_n^g$. Evaluate the material over this positive
+interval and differentiate its endpoint map with respect to the trial endpoint. Thus an algorithmic tangent is
+available before the first correction without a separate zero-duration evolution solve. This distinction also
+allows rate-dependent evolution at fixed deformation. The previous increment's tangent need not be saved: both
+Newton variants refresh a tangent at the beginning of each new attempt.
 
 At global Newton iteration $i$ for the fixed target pseudo-time $t_{n+1}$, the element constructs the trial kinematics and calls the native material update using the same $\mathcal H_n^g$ on every global iteration. It receives a provisional state
 \begin{equation}
@@ -1862,7 +1878,7 @@ The element algorithms provide the local residual, tangent, and trial constituti
   For exact Newton, refresh $\vct K^{(i)}$ every iteration. For modified Newton, a previously formed tangent may be retained while stresses, residuals, and trial constitutive states are still reevaluated at every new $\vct u_{n+1}^{(i)}$.
   \item Apply the full correction, or, when globalization is enabled, select an admissible residual-reducing $\alpha_i$ by Eqs.~\eqref{eq:kkt-damped-update}--\eqref{eq:kkt-armijo}. Reevaluate every search candidate from the unchanged committed material state $\mathcal H_n$.
   \end{enumerate}
-\item On convergence, atomically commit $\vct u_{n+1}$, $\vct\lambda_{n+1}$, and the trial Gauss-point states returned by the converged element evaluations. On recoverable failure or nonconvergence, discard the entire trial endpoint and repeat the same $n\rightarrow n+1$ advance with a smaller pseudo-time increment from the unchanged committed state.
+\item On convergence, atomically commit $\vct u_{n+1}$, $\vct\lambda_{n+1}$, and the trial Gauss-point states returned by the converged element evaluations, and retain their accepted stresses for observation. Equilibrium checks use the converged response. Optional directional-tangent checks perturb this same positive-time increment from its original committed history before that history is overwritten. On recoverable failure or nonconvergence, discard the entire trial endpoint and repeat the same $n\rightarrow n+1$ advance with a smaller pseudo-time increment from the unchanged committed state.
 \end{enumerate}
 \end{algorithmbox}
 

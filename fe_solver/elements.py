@@ -13,6 +13,7 @@ from .types import (
     FailureKind,
     GaussOutput,
     MaterialRequest,
+    ModelError,
 )
 
 
@@ -66,6 +67,45 @@ def _B_matrix(grad_x: np.ndarray) -> np.ndarray:
 
 def _stress_voigt(sigma: np.ndarray) -> np.ndarray:
     return np.asarray([sigma[i, j] for i, j in _VOIGT_PAIRS])
+
+
+def observe_committed_element(
+    X: np.ndarray, u: np.ndarray, formulation: str, stresses: np.ndarray,
+) -> tuple[np.ndarray, GaussOutput]:
+    """Reconstruct kinematics and residual from accepted stresses; never call a material."""
+    shape, points, weights = _quadrature(formulation)
+    if stresses.shape != (len(points), 3, 3) or not np.all(np.isfinite(stresses)):
+        raise ModelError("invalid committed Gauss-point stress")
+    x = X + u.reshape(-1, 3)
+    f = np.zeros(u.size)
+    output = GaussOutput()
+    Jc = None
+    if formulation == "hex8_fbar":
+        _, dN = shape(np.zeros(3))
+        _, _, detJ0, detJx, _, Fc = _kinematics(X, x, dN)
+        if detJ0 <= _GEOM_TOL or detJx <= _GEOM_TOL:
+            raise ModelError("invalid committed centroid geometry")
+        Jc = float(np.linalg.det(Fc))
+    for xi, weight, sigma in zip(points, weights, stresses):
+        _, dN = shape(xi)
+        _, _, detJ0, detJx, grad_X, F = _kinematics(X, x, dN)
+        if detJ0 <= _GEOM_TOL or detJx <= _GEOM_TOL:
+            raise ModelError("invalid committed Gauss-point geometry")
+        J = float(np.linalg.det(F))
+        alpha = (Jc / J) ** (1.0 / 3.0) if Jc is not None else 1.0
+        F_material = alpha * F
+        J_material = Jc if Jc is not None else J
+        P = J_material * sigma @ np.linalg.inv(F_material).T
+        grad_x = grad_X @ np.linalg.inv(F)
+        f += _B_matrix(grad_x).T @ _stress_voigt(sigma) * detJx * float(weight)
+        output.F_raw.append(F)
+        output.J_raw.append(J)
+        output.F_material.append(F_material)
+        output.J_material.append(J_material)
+        output.P_material.append(P)
+        output.P_effective.append(P / (alpha * alpha))
+        output.cauchy_stress.append(sigma.copy())
+    return f, output
 
 
 def evaluate_standard_element(request: ElementRequest) -> ElementResponse:

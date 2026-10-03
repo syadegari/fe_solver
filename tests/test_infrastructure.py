@@ -700,7 +700,7 @@ class TimeRestartTests(unittest.TestCase):
             path = Path(directory) / "prism.h5"
             with HDF5ResultWriter(path, model) as writer:
                 writer.append(0.0, u_n, np.zeros_like(u_n), initial)
-                commit_trial_states(model, trial.state_trial)
+                commit_trial_states(model, trial.state_trial, trial.gauss_output)
                 writer.append(0.1, u_trial, np.zeros_like(u_n), trial)
             history = extract_prism_history(path)
 
@@ -837,8 +837,8 @@ class TimeRestartTests(unittest.TestCase):
 
             def fail_once(*args, **kwargs):
                 calls["count"] += 1
-                # Call one recovers the initial accepted state for output.
-                if calls["count"] == 2:
+                # Startup reporting makes no constitutive assembly call.
+                if calls["count"] == 1:
                     raise RecoverableError("deliberate trial failure")
                 return actual_assemble(*args, **kwargs)
 
