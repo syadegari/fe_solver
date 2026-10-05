@@ -232,7 +232,7 @@ radians, preserving the explicit mapping from `(phase_id, grain_id)` to phase-lo
 optional diagnostic metadata; it does not select constitutive properties at runtime. No orientation counts are
 compiled into or exposed by the library.
 
-ABI version 4 exports separate BCC/ferrite and FCC/austenite initializer and update functions. Their state sizes are
+ABI version 5 exports separate BCC/ferrite and FCC/austenite initializer and update functions. Their state sizes are
 exactly 93 and 151 doubles. Updates receive `F_n`, `F_np1`, committed state, endpoint times,
 and a contiguous three-double Euler-angle buffer. The bridge supplies `props(1:3)` with `nprops=3`; phase routines
 pass these angles directly to the existing `ROTATIONMATRIX`. Preserve its radians, angle order, signs, and
@@ -252,9 +252,12 @@ A[27*i + 9*I + 3*j + J] = dP[i,I]/dF[j,J]
 ```
 
 Reject invalid state sizes, non-finite Euler angles, endpoint times, non-finite state, non-finite responses, and
-deformation gradients with nonpositive determinant at the ABI boundary. The current legacy routine constructs its
-tangent unconditionally: stop `need_tangent` at the Python wrapper, do not pass it into the C/Fortran ABI, and return
-`A_alg=None` when the common API does not request a tangent. Some internal legacy `STOP` paths remain
+deformation gradients with nonpositive determinant at the ABI boundary. Pass `need_tangent` through the Python
+wrapper, C ABI (final integer argument: zero means false), and UMAT dispatch to both phase routines. A false flag
+must bypass `CONSISTENTTANGENTFCC`/`CONSISTENTTANGENTBCC` without changing stress integration, substepping,
+active-system selection, or returned state. Set the unused native tangent buffer to zero and return `A_alg=None`
+at the Python boundary; that zero buffer is not a physical tangent. Validate the tangent only when requested.
+Some internal legacy `STOP` paths remain
 process-terminating rather than recoverable and must not be misrepresented as material status returns.
 
 Register the two Python material roots `multiphase_trip_ferrite` and `multiphase_trip_austenite`. The latter includes
@@ -925,6 +928,10 @@ At every global iteration:
 - set `need_tangent=False` on material calls when no tangent refresh is needed.
 
 A new increment attempt must have a valid tangent/factorization before its first correction unless an explicit safe reuse policy is implemented.
+
+Material implementations that support residual-only evaluation must honor the request through their integration
+boundary, not merely discard an already-computed tangent. The TRIP phase routines skip their nine-component
+perturbation solve when the tangent is not requested; the stress/state integration remains unchanged.
 
 For both Newton variants, the first trial uses `u_trial=u_n` but `t_np1>t_n`. Obtain its stress and tangent from that
 positive-time integration, even though its endpoint deformation gradients initially coincide. Cold-start/restart

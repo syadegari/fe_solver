@@ -1525,6 +1525,11 @@ M(\alpha_i)\leq (1-c\alpha_i)M_i,
 \end{equation}
 Every candidate constitutive update is evaluated from the same committed pair $(\F_n,\mathcal H_n)$, exactly as for an ordinary Newton trial.  Hence a rejected candidate cannot contaminate history.  A nonpositive trial Jacobian or another recoverable local failure rejects that search length; failure to find an admissible decreasing length is itself a recoverable increment failure and may invoke pseudo-time cutback.
 
+The merit test requires stresses and trial state, not their endpoint derivative. A residual-only evaluation may
+therefore omit constitutive differentiation and stiffness construction without changing the integration map.
+The current exact-Newton implementation nevertheless constructs each candidate tangent so that the accepted
+assembly can be reused at the next iteration; modified-Newton candidates omit it and retain the frozen tangent.
+
 For the linear special case $\vct R=\vct K\vct u-\vct f$, Eq.~\eqref{eq:kkt-newton} reduces directly to
 \begin{equation}
 \boxed{

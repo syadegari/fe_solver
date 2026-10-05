@@ -67,6 +67,7 @@ runtime angle buffers; orientation files are no longer compiler inputs.
 - [x] Register ferritic and austenitic models with `internal_variables` layouts of 93 and 151 entries respectively;
   their public component labels are zero-based.
 - [x] Replace compiled orientation catalogs with runtime float64 Euler angles, retaining the existing rotation convention.
+- [x] Honor `need_tangent` through the TRIP ABI and skip numerical tangent construction on residual-only calls.
 - [x] Separate cold-start/restart observation from evolution; save accepted Gauss-point stress for reporting and
   evaluate all solver constitutive trials over positive-time increments.
 - [x] Check material-point stress/tangent/state against the catalog-based kernel, including evolved shear/tension
@@ -76,7 +77,7 @@ runtime angle buffers; orientation files are no longer compiler inputs.
 - [ ] Agree on finite-load material characterization and larger TRIP runs after the interface checks.
 
 Current interface review and audits are recorded in `MULTIPHASE_TRIP_INTERFACE_REFINEMENT.md`. Runtime Euler angles
-use ABI version 4. The legacy UMAT is demonstrably unsafe at zero duration; its strict positive-time
+use ABI version 5 with tangent-request control. The legacy UMAT is demonstrably unsafe at zero duration; its strict positive-time
 guard remains intact. FE observation now uses accepted stress, and the material-point driver's initial row reports
 initialization without calling evolution. Tangent verification uses the actual positive-time increment.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 from pathlib import Path
 import subprocess
 import tempfile
@@ -23,9 +24,11 @@ from fe_solver.types import (
 _STUB_SOURCE = r"""
 #include <math.h>
 
-int cp_abi_version(void) { return 4; }
+int cp_abi_version(void) { return 5; }
 int cp_bcc_state_size(void) { return 93; }
 int cp_fcc_state_size(void) { return 151; }
+static int tangent_calls = 0;
+int cp_tangent_calls(void) { return tangent_calls; }
 
 static int initialize(int expected, int n, double *state) {
     if (n != expected) return 1;
@@ -45,17 +48,20 @@ static int update(
     int expected, int n, const double *angles,
     double t_n, double t_np1, const double *F_n,
     const double *F_np1, const double *state_n, double *P, double *A,
-    double *state_out) {
+    double *state_out, int need_tangent) {
     (void)F_n;
     if (n != expected) return 1;
     for (int i = 0; i < 3; ++i) if (!isfinite(angles[i])) return 2;
     if (!(t_np1 > t_n)) return 3;
     if (!(determinant(F_np1) > 0.0)) return 5;
     for (int i = 0; i < 9; ++i) P[i] = F_np1[i] - (i % 4 == 0 ? 1.0 : 0.0);
-    for (int i = 0; i < 81; ++i) A[i] = 0.0;
-    for (int i = 0; i < 3; ++i)
-        for (int I = 0; I < 3; ++I)
-            A[27*i + 9*I + 3*i + I] = 1.0;
+    if (need_tangent) ++tangent_calls;
+    /* The wrapper must not expose or use an unrequested tangent buffer. */
+    for (int i = 0; i < 81; ++i) A[i] = need_tangent ? 0.0 : NAN;
+    if (need_tangent)
+        for (int i = 0; i < 3; ++i)
+            for (int I = 0; I < 3; ++I)
+                A[27*i + 9*I + 3*i + I] = 1.0;
     for (int i = 0; i < n; ++i) state_out[i] = state_n[i] + 1.0;
     for (int i = 0; i < 3; ++i) state_out[i] += angles[i];
     return 0;
@@ -64,16 +70,16 @@ static int update(
 int cp_bcc_update(
     int n, const double *angles, double t0, double t1,
     const double *F0, const double *F1, const double *state0,
-    double *P, double *A, double *state1) {
+    double *P, double *A, double *state1, int need_tangent) {
     return update(93, n, angles, t0, t1,
-                  F0, F1, state0, P, A, state1);
+                  F0, F1, state0, P, A, state1, need_tangent);
 }
 int cp_fcc_update(
     int n, const double *angles, double t0, double t1,
     const double *F0, const double *F1, const double *state0,
-    double *P, double *A, double *state1) {
+    double *P, double *A, double *state1, int need_tangent) {
     return update(151, n, angles, t0, t1,
-                  F0, F1, state0, P, A, state1);
+                  F0, F1, state0, P, A, state1, need_tangent);
 }
 """
 
@@ -156,8 +162,8 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
         source = self.root / "old_stub.c"
         source.write_text(
             _STUB_SOURCE.replace(
+                "cp_abi_version(void) { return 5; }",
                 "cp_abi_version(void) { return 4; }",
-                "cp_abi_version(void) { return 3; }",
             ),
             encoding="utf-8",
         )
@@ -183,7 +189,7 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
             )
         )
         self.assertEqual(initialized.status.kind, FailureKind.FATAL)
-        self.assertIn("ABI version 3, expected 4; rebuild", initialized.status.message)
+        self.assertIn("ABI version 4, expected 5; rebuild", initialized.status.message)
 
     def test_initialization_update_and_trial_state(self) -> None:
         for phase, phase_id, orientation_id, size in (
@@ -207,7 +213,10 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
                 0.1,
                 True,
             )
+            counter = ctypes.CDLL(str(self.library)).cp_tangent_calls
+            before_tangent = counter()
             response = definition.model.update(request)
+            self.assertEqual(counter(), before_tangent + 1)
             self.assertTrue(response.status.ok)
             np.testing.assert_array_equal(initialized.state0, committed)
             np.testing.assert_allclose(response.P, F - np.eye(3))
@@ -230,6 +239,7 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
                 )
             )
             self.assertTrue(without_tangent.status.ok)
+            self.assertEqual(counter(), before_tangent + 1)
             self.assertIsNone(without_tangent.A_alg)
             np.testing.assert_array_equal(without_tangent.P, response.P)
             np.testing.assert_array_equal(
@@ -272,7 +282,7 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
                 point_properties,
                 0.0,
                 0.1,
-                True,
+                index == 0,
                 "hex8",
             )
             for index in range(2)
@@ -280,10 +290,14 @@ class MultiphaseTRIPRegistrationTests(unittest.TestCase):
         with ElementExecutor([definition], len(items), 2) as executor:
             responses = list(executor.evaluate(items))
         self.assertEqual(len(responses), 2)
-        for response in responses:
+        for index, response in enumerate(responses):
             self.assertTrue(response.status.ok)
             np.testing.assert_allclose(response.f_int, 0.0, atol=1.0e-14)
-            self.assertIsNotNone(response.K)
+            if index == 0:
+                self.assertIsNotNone(response.K)
+            else:
+                self.assertIsNone(response.K)
+        np.testing.assert_array_equal(responses[0].state_trial, responses[1].state_trial)
 
     def test_angles_are_required_and_orientation_id_is_only_metadata(self) -> None:
         definition = self._definition("bcc")

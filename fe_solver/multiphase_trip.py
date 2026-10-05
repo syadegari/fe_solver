@@ -30,7 +30,7 @@ CP_INVALID_DEFORMATION = 5
 CP_NONFINITE_STATE = 6
 CP_NONFINITE_RESPONSE = 7
 
-_ABI_VERSION = 4
+_ABI_VERSION = 5
 _PHASES = {
     "bcc": (1, 93),
     "fcc": (2, 151),
@@ -86,6 +86,7 @@ class _TRIPLibrary:
                     _VECTOR,
                     _VECTOR,
                     _VECTOR,
+                    ctypes.c_int,
                 ]
                 update.restype = ctypes.c_int
         except AttributeError as exc:
@@ -261,8 +262,6 @@ def _update(
         P = np.empty(9, dtype=np.float64)
         A = np.empty(81, dtype=np.float64)
         state_trial = np.empty(layout.n_state, dtype=np.float64)
-        # UMAT always computes dP/dF: need_tangent stops at this wrapper boundary.
-        # It only controls whether the common API returns that computed tangent.
         status = getattr(library.handle, f"cp_{phase}_update")(
             layout.n_state,
             angles,
@@ -274,6 +273,7 @@ def _update(
             P,
             A,
             state_trial,
+            int(request.need_tangent),
         )
     except (ModelError, TypeError, ValueError) as exc:
         return _failure(request, FailureKind.FATAL, str(exc))

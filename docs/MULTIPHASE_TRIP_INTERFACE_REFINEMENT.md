@@ -8,9 +8,9 @@ This document records the audit and decisions; executable requirements remain in
 - Initialization validates phase and the Euler-angle vector even though orientation is unused by `SDVINI`.
   A comment explains this deliberate validation.
 - Library loading is already cached per process; hashing is not repeated per quadrature-point update.
-- The common `need_tangent` flag stops at the Python TRIP wrapper. The legacy kernel always calculates its tangent,
-  so ABI version 3 removes the unused argument. The wrapper still returns `A_alg=None` when not requested.
-- J2 retains its flag because its numeric kernel actually skips tangent construction.
+- The common `need_tangent` flag reaches both TRIP phase routines through ABI version 5. Residual-only calls skip
+  numerical tangent construction and return `A_alg=None`, with unchanged stress and trial state.
+- J2 likewise skips tangent construction when the flag is false.
 - Restart restores full quadrature-point history into `model.blocks` in place. A solver comment explains why only
   primary variables appear in the returned tuple and why independent stress history, if needed by a material, belongs
   in that material's declared state.
@@ -83,6 +83,32 @@ orientation counts and domain/catalog-specific compilation from the bridge and b
 phase dispatch, library identity, and input shape/finiteness checks remain: those are unrelated to catalog lookup.
 Existing property files need regeneration to include `euler_angles`, and older libraries need rebuilding. The TOML
 structure remains unchanged. Old restart identities are not interchangeable with the new library/property identity.
+
+### Restored tangent-request control
+
+ABI version 3 removed the ineffective request flag. ABI version 5 restores it with a guard around each actual
+`CONSISTENTTANGENTFCC`/`CONSISTENTTANGENTBCC` call. Python forwards the existing `need_tangent` value as the final
+integer argument; UMAT dispatch forwards its logical equivalent to the phase routine. Stress evolution, substeps,
+active-system updates, and complete state output are unchanged. An unrequested native tangent buffer is zero-filled
+for deterministic ABI output, but is represented as `None` by the common material API.
+
+The solver's policy is unchanged: modified Newton requests a tangent on the first assembly of each increment
+attempt, then uses residual-only calls, including its line-search candidates. Full Newton currently requests a
+tangent for each candidate and reuses the accepted candidate assembly at the next iteration. Thus this change
+saves local tangent work only where the existing global algorithm requests a residual-only evaluation.
+
+Verification compares both flags through 50 shear increments to `F12=0.02` for each phase, including active slip:
+stress and all state entries are bitwise identical, committed input is unchanged, and residual-only tangent buffers
+are zero. A counted test-library tangent routine also checks that the Python wrapper actually forwards false rather
+than just dropping the returned tangent.
+
+The solver suite passed 71 tests (one existing unavailable-SuperLU_MT skip), the companion suite passed seven,
+and the focused adapter suite verified both flag values in process workers. A real-library 4³ heterogeneous
+periodic cube with backtracking accepted two increments to `t=0.002` under both Newton variants. Its modified-Newton
+assembly flags were `[true,false,false,false,true,false,false,false]`, confirming one tangent request per attempt.
+Displacement, complete state, and accepted stress matched full Newton within the check's `1e-8` relative tolerance
+(absolute tolerances `1e-10`, `1e-8`, and `1e-9`, respectively). This is a bounded integration check, not a new
+finite-load verification study.
 
 ### Considered alternative (not implemented): grain-specific TOML material definitions
 
