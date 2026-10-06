@@ -77,6 +77,10 @@ def extract_trip_history(
         packed = 1000.0 * pack_symmetric(stress)
         for index, label in enumerate(TENSOR_COMPONENTS):
             columns[f"{region}_cauchy_stress_{label}_MPa"] = packed[:, index]
+        # Trace is linear: hydrostatic stress commutes with volume averaging.
+        columns[f"{region}_hydrostatic_stress_MPa"] = (
+            1000.0 * np.trace(stress, axis1=-2, axis2=-1) / 3.0
+        )
         # These two operations do not commute for heterogeneous stress fields.
         columns[f"{region}_von_mises_of_mean_stress_MPa"] = 1000.0 * von_mises_stress(stress)
         local_mean = (
@@ -148,6 +152,7 @@ def extract_trip_history(
         "stress_component": component,
         "stress_components": list(TENSOR_COMPONENTS),
         "stress_invariant": "von Mises = sqrt(3 J2); J2 = (s:s)/2, s = dev(sigma)",
+        "hydrostatic_stress_definition": "sigma_h = tr(sigma)/3; tension positive; pressure = -sigma_h",
         "strain_column": plotted_strain_name,
         "hencky_component_column": log_strain_name,
         "engineering_strain_column": strain_name,
@@ -243,6 +248,23 @@ def write_trip_report(history: dict[str, Any], output: str | Path) -> Path:
     plt.close(figure)
 
     figure, axis = plt.subplots(figsize=(7.2, 4.8), constrained_layout=True)
+    for region in stress_regions:
+        axis.plot(
+            x, columns[f"{region}_hydrostatic_stress_MPa"],
+            label="whole RVE" if region == "rve" else region,
+            **styles.get(region, {}),
+        )
+    axis.set(
+        xlabel=xlabel,
+        ylabel=r"Current-volume mean hydrostatic stress $\sigma_{\mathrm{h}}$ [MPa]",
+    )
+    axis.set_title(title)
+    axis.grid(True, alpha=0.25)
+    axis.legend()
+    figure.savefig(output / "hydrostatic_stress_vs_strain.svg")
+    plt.close(figure)
+
+    figure, axis = plt.subplots(figsize=(7.2, 4.8), constrained_layout=True)
     axis.plot(x, 100 * columns["martensite_mean_initial_austenite_reference"], label="mean within initial austenite")
     axis.plot(x, 100 * columns["martensite_contribution_initial_rve_reference"], label="contribution per initial RVE volume")
     axis.set(xlabel=xlabel, ylabel=r"Reference-volume mean stored $\Sigma\xi$ [%]")
@@ -305,6 +327,14 @@ Tensor contraction counts off-diagonal shear terms twice. Averaging and taking
 this invariant do not commute, so the two panels measure different things.
 Von Mises is a descriptive stress invariant here, not the TRIP model's yield
 criterion. Its values are saved in MPa; J2 itself would have stress-squared units.
+
+`hydrostatic_stress_vs_strain.svg`: current-volume mean hydrostatic Cauchy stress
+for each phase and the entire RVE, sigma_h = tr(sigma)/3. Tension is positive;
+compression is negative, so pressure would be -sigma_h. The hydrostatic part of
+the stress tensor is sigma_h I, complementary to the deviatoric invariant above.
+Unlike von Mises stress, trace commutes with averaging: the mean local sigma_h
+equals sigma_h computed from the mean stress tensor. Only one curve per region
+is therefore needed. These histories are also saved in MPa in the numeric data.
 
 `martensite_vs_strain.svg`: the mean saved `{history['martensite_field']}`
 within the initially austenitic region, and its contribution per initial RVE volume.

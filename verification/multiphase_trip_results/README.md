@@ -4,7 +4,7 @@ Status: both finite-load runs and the final SVG presentation were accepted by th
 No additional numerical verification is required for this integration branch. Higher-resolution
 solver/performance and visualization runs are deferred.
 
-Closure checks: the complete Python regression suite ran 78 tests successfully, with one
+Initial closure checks: the complete Python regression suite ran 78 tests successfully, with one
 existing unavailable-native-backend skip. Each archived case artifact matches the original
 local file byte-for-byte; extracted histories match both retained JSON and NumPy columns,
 and database time points agree exactly with the accepted-increment log. HDF5 string metadata
@@ -74,6 +74,13 @@ The underlying unscaled Hencky component is retained in the numerical histories.
 The invariant plot distinguishes von Mises of averaged stress from the average of
 local von Mises stress; neither is asserted to be this material's yield criterion.
 Beta is the model's internal parameter, not an independently defined equivalent plastic strain.
+
+The subsequent `hydrostatic_stress_vs_strain.svg` plot complements the deviatoric invariant:
+it shows current-volume mean `sigma_h = tr(sigma)/3` for ferrite, austenite, and the whole RVE.
+Tension is positive, compression negative; pressure is `-sigma_h`. Trace commutes with
+volume averaging, unlike von Mises stress, so one curve per region suffices. Hydrostatic
+histories are included in the numerical reports. This addition changes only derived reports,
+not the original simulation databases, logs, or inputs; the closure tag remains unchanged.
 
 The maintainer inspected both phase blocks and evolving fields in ParaView and accepted
 the results. This closes the integration/periodic workflow milestone, not an independent

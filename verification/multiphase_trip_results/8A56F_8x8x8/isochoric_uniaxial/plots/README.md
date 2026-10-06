@@ -39,6 +39,14 @@ this invariant do not commute, so the two panels measure different things.
 Von Mises is a descriptive stress invariant here, not the TRIP model's yield
 criterion. Its values are saved in MPa; J2 itself would have stress-squared units.
 
+`hydrostatic_stress_vs_strain.svg`: current-volume mean hydrostatic Cauchy stress
+for each phase and the entire RVE, sigma_h = tr(sigma)/3. Tension is positive;
+compression is negative, so pressure would be -sigma_h. The hydrostatic part of
+the stress tensor is sigma_h I, complementary to the deviatoric invariant above.
+Unlike von Mises stress, trace commutes with averaging: the mean local sigma_h
+equals sigma_h computed from the mean stress tensor. Only one curve per region
+is therefore needed. These histories are also saved in MPa in the numeric data.
+
 `martensite_vs_strain.svg`: the mean saved `martensite_fraction`
 within the initially austenitic region, and its contribution per initial RVE volume.
 Both use reference-volume weights; the latter treats initial ferrite as zero.

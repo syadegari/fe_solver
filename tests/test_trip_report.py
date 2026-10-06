@@ -119,6 +119,25 @@ class TripReportTests(unittest.TestCase):
         self.assertAlmostEqual(c["rve_von_mises_of_mean_stress_MPa"][-1], np.sqrt(3) * 80)
         self.assertAlmostEqual(c["rve_mean_local_von_mises_stress_MPa"][-1], np.sqrt(3) * 160)
 
+    def test_hydrostatic_stress_uses_current_volume_and_tension_positive(self) -> None:
+        self._write_fixture()
+        with h5py.File(self.database, "a") as h:
+            h["results/blocks/0000/cauchy_stress"][1, 0, :3] = [0.03, 0.06, 0.09]
+            h["results/blocks/0001/cauchy_stress"][1, 0, :3] = [-0.12, -0.18, -0.24]
+        history = extract_trip_history(self.database)
+        c = history["columns"]
+        np.testing.assert_allclose(c["ferrite_hydrostatic_stress_MPa"], [0, 60])
+        np.testing.assert_allclose(c["austenite_hydrostatic_stress_MPa"], [0, -180])
+        np.testing.assert_allclose(c["rve_hydrostatic_stress_MPa"], [0, -84])
+        self.assertAlmostEqual(
+            c["rve_hydrostatic_stress_MPa"][-1],
+            0.4 * c["ferrite_hydrostatic_stress_MPa"][-1]
+            + 0.6 * c["austenite_hydrostatic_stress_MPa"][-1],
+        )
+        for region in ("ferrite", "austenite", "rve"):
+            normal_mean = sum(np.asarray(c[f"{region}_cauchy_stress_{ij}_MPa"]) for ij in ("11", "22", "33")) / 3
+            np.testing.assert_allclose(c[f"{region}_hydrostatic_stress_MPa"], normal_mean)
+
     def test_tension_uses_stretch_increment(self) -> None:
         self._write_fixture(shear=False)
         history = extract_trip_history(self.database)
@@ -155,7 +174,7 @@ class TripReportTests(unittest.TestCase):
                 np.testing.assert_array_equal(numeric[name], values)
         for name in (
             "stress_vs_strain", "stress_components_vs_strain", "von_mises_vs_strain",
-            "martensite_vs_strain", "beta_vs_strain",
+            "hydrostatic_stress_vs_strain", "martensite_vs_strain", "beta_vs_strain",
         ):
             svg = output / f"{name}.svg"
             self.assertGreater(svg.stat().st_size, 1000)

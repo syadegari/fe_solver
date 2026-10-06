@@ -89,7 +89,8 @@ validation of the opaque constitutive model. No further verification runs are re
 beside each database. The plots use `2 hbar12` for shear and `hbar11 = ln(lambdabar)` for tension; the original
 Hencky component remains in the saved report data. Stress plots include all six components and both von Mises
 of the averaged stress and the average of local von Mises stress. Scalar-state plots include transformation and
-both phase beta values. Stress averages use current-volume weights; state averages use reference-volume weights.
+both phase beta values. A separate hydrostatic-stress plot complements the deviatoric invariant, using
+`tr(sigma)/3` with tension positive. Stress averages use current-volume weights; state averages use reference-volume weights.
 Saved cell fields are centroid-recovered, so these are postprocessing averages rather than exact Gauss-point histories.
 
 - [x] User approves the final SVG plot presentation.
