@@ -29,7 +29,7 @@ python benchmark_superlu_mt.py \
     --threads 1 2 4 8 16 \
 ```
 
-__NOTE__: The `.h5` files are tracked using `git lfs` and before running the benchmark, you should pull them using `git lfs pull`. 
+__NOTE__: The `.h5` files are tracked using `git lfs` and before running the benchmark, you should pull them using `git lfs pull` in the root directory. 
 
 TODO: One important question comes up here: 
   - Make sure that the above three exports are enforced inside the solver. Somehow running the solver without setting the three thread vars went through without problem, at least for the benchmark 16x16x16 mesh.
