@@ -21,6 +21,13 @@ from fe_solver.types import ModelError
 _COMPONENT_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
+def von_mises_stress(stress: np.ndarray) -> np.ndarray:
+    """Return sqrt(3 J2) for symmetric Cauchy tensors [..., 3, 3]."""
+    stress = np.asarray(stress, dtype=float)
+    deviator = stress - np.trace(stress, axis1=-2, axis2=-1)[..., None, None] * np.eye(3) / 3.0
+    return np.sqrt(1.5 * np.sum(deviator**2, axis=(-2, -1)))
+
+
 def _decode(value: Any) -> str:
     return value.decode("utf-8") if isinstance(value, bytes) else str(value)
 
@@ -127,10 +134,15 @@ def extract_periodic_composite_history(database: str | Path) -> dict[str, Any]:
         region: np.empty((complete, 3, 3)) for region, *_ in prepared_blocks
     }
     total_stress = np.empty((complete, 3, 3))
+    phase_mean_local_von_mises = {
+        region: np.empty(complete) for region, *_ in prepared_blocks
+    }
+    total_mean_local_von_mises = np.empty(complete)
     for step in range(complete):
         integrated_F = np.zeros((3, 3))
         integrated_stress = np.zeros((3, 3))
         current_volume = 0.0
+        integrated_von_mises = 0.0
         for region, connectivity, stress, X_e, invJ0, dv0 in prepared_blocks:
             x_e = X_e + displacement[step, connectivity]
             Jx = np.einsum("eni,gnj->egij", x_e, derivatives)
@@ -141,10 +153,14 @@ def extract_periodic_composite_history(database: str | Path) -> dict[str, Any]:
             phase_volume = float(np.sum(element_volume))
             phase_integral = np.einsum("e,eij->ij", element_volume, sigma)
             phase_stress[region][step] = phase_integral / phase_volume
+            phase_von_mises_integral = float(element_volume @ von_mises_stress(sigma))
+            phase_mean_local_von_mises[region][step] = phase_von_mises_integral / phase_volume
+            integrated_von_mises += phase_von_mises_integral
             integrated_stress += phase_integral
             current_volume += phase_volume
         average_F[step] = integrated_F / reference_volume
         total_stress[step] = integrated_stress / current_volume
+        total_mean_local_von_mises[step] = integrated_von_mises / current_volume
 
     macro_F = np.asarray([macro(float(time)) for time in times])
     average_F_error = np.max(np.abs(average_F - macro_F), axis=(1, 2))
@@ -168,6 +184,14 @@ def extract_periodic_composite_history(database: str | Path) -> dict[str, Any]:
         "whole_cell_cauchy_stress_component": total_stress[
             :, component_i, component_j
         ].tolist(),
+        "phase_cauchy_stress_tensor": {
+            region: values.tolist() for region, values in phase_stress.items()
+        },
+        "whole_cell_cauchy_stress_tensor": total_stress.tolist(),
+        "phase_mean_local_von_mises_stress": {
+            region: values.tolist() for region, values in phase_mean_local_von_mises.items()
+        },
+        "whole_cell_mean_local_von_mises_stress": total_mean_local_von_mises.tolist(),
         "volume_average_F": average_F.tolist(),
         "prescribed_macro_F": macro_F.tolist(),
         "volume_average_F_error_inf": average_F_error.tolist(),
