@@ -1,0 +1,110 @@
+[analysis]
+name = "8a56f_8x8x8_simple_shear"
+t_start = 0.0
+t_end = 2000.0
+
+[mesh]
+file = "8a56f_8x8x8.msh"
+format = "gmsh_msh41"
+
+[time]
+dt_initial = 0.1
+dt_min = 1.0e-5
+dt_max = 10
+cutback_factor = 0.5
+growth_factor = 1.25
+grow_if_newton_iterations_le = 10
+max_attempts_per_increment = 20
+
+[nonlinear]
+method = "newton"
+line_search = "backtracking"
+line_search_reduction = 0.5
+line_search_armijo = 1.0e-4
+line_search_min_alpha = 1.0e-4
+line_search_max_backtracks = 14
+max_iterations = 30
+force_rtol = 1.0e-8
+force_atol = 1.0e-6
+constraint_rtol = 1.0e-10
+constraint_atol = 1.0e-10
+check_displacement_increment = true
+displacement_rtol = 1.0e-9
+displacement_atol = 1.0e-10
+
+[linear_solver]
+backend = "scipy_splu"
+ordering = "COLAMD"
+singular_policy = "diagnose_and_abort"
+
+[[curves]]
+name = "ramp"
+points = [[0.0, 0.0], [2000.0, 1.0]]
+
+[[materials]]
+name = "ferrite"
+model = "multiphase_trip_ferrite"
+[materials.properties]
+library = "build/libmultiphase_trip.so"
+
+[[materials]]
+name = "austenite"
+model = "multiphase_trip_austenite"
+[materials.properties]
+library = "build/libmultiphase_trip.so"
+
+[[point_property_sources]]
+name = "microstructure"
+file = "8a56f_8x8x8_properties.h5"
+format = "hdf5_element_properties"
+
+[[element_assignments]]
+region = "ferrite"
+formulation = "hex8_fbar"
+material = "ferrite"
+point_properties = "microstructure"
+
+[[element_assignments]]
+region = "austenite"
+formulation = "hex8_fbar"
+material = "austenite"
+point_properties = "microstructure"
+
+[[constraints.periodic_rve]]
+slave_regions = ["xmax", "ymax", "zmax"]
+anchor_region = "anchor"
+macro_deformation = {type = "simple_shear", direction = "x", normal = "y", amount = {curve = "ramp", scale = 0.2}}
+
+[output]
+directory = "results/8a56f_8x8x8_simple_shear"
+interval = 40.0
+explicit_times = [0.1, 0.2, 2.0, 4.0, 10.0, 20.0, 40.0, 80.0, 2000.0]
+database = "run.h5"
+history_file = "run_log.json"
+cell_properties = ["phase_id", "grain_id", "orientation_id"]
+
+[[output.material_state]]
+material = "austenite"
+select = "internal_variables[91]"
+name = "martensite_fraction"
+
+[[output.material_state]]
+material = "austenite"
+select = "internal_variables[66]"
+name = "beta_austenite"
+
+[[output.material_state]]
+material = "ferrite"
+select = "internal_variables[57]"
+name = "beta_ferrite"
+
+[restart]
+enabled = true
+interval = 250.0
+explicit_times = [1000.0, 2000.0]
+keep_last = 3
+restart_from = ""
+
+[verification]
+periodic_average_F = true
+macro_F_tolerance = 1.0e-9

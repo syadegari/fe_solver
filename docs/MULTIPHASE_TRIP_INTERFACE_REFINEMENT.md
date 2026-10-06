@@ -238,4 +238,5 @@ nodes prescribed by affine simple shear, orientation entry zero, and two increme
 `F12=4e-5`. Restarting after the first increment into a separate results database reproduced the restart-time stress
 exactly. Resumed and uninterrupted final displacement, complete state, and accepted stress were identical; force
 balance residuals were below `2e-17`. This is a startup/restart integration check, not plastic/transformation
-characterization or the pending periodic heterogeneous smoke case.
+characterization. The periodic heterogeneous smoke and subsequent accepted full-load runs are recorded in
+`CRYSTAL_PLASTICITY_INTEGRATION_PLAN.md`.

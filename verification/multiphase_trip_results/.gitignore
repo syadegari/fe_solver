@@ -1,0 +1,3 @@
+**/results/
+**/*.xdmf
+**/*.xdmf.h5

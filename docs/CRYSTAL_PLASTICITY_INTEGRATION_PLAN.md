@@ -74,7 +74,35 @@ runtime angle buffers; orientation files are no longer compiler inputs.
   paths; retain the small elastic tangent/tensor-order check. This verifies the interface, not arbitrary active-set
   transitions in the black-box model.
 - [x] Run a bounded periodic FE smoke case with both phases and runtime angles.
-- [ ] Agree on finite-load material characterization and larger TRIP runs after the interface checks.
+- [x] Complete the agreed 8A/56F 8³ periodic simple-shear and isochoric-uniaxial runs over 0--2000 seconds;
+  inspect both phase outputs and summarize stress, transformation fraction, beta, and average raw kinematics.
+
+## Finite-load closure and remaining handoff
+
+Both 8³ runs reached the prescribed 20% deformation and were visually accepted by the user. Simple shear saved
+528 states; isochoric tension saved 678 states. Across all saved states, the largest componentwise error in the
+reference-volume average of raw kinematic `F` relative to imposed `Fbar` was `8.10e-15` and `6.66e-15`, respectively.
+These runs exercise the integration and heterogeneous periodic workflow; they are not independent experimental
+validation of the opaque constitutive model. No further verification runs are required for this branch by agreement.
+
+`verification.summarize_multiphase_trip` writes SVG plots plus numerical histories and an averaging/units README
+beside each database. The plots use `2 hbar12` for shear and `hbar11 = ln(lambdabar)` for tension; the original
+Hencky component remains in the saved report data. Stress plots include all six components and both von Mises
+of the averaged stress and the average of local von Mises stress. Scalar-state plots include transformation and
+both phase beta values. Stress averages use current-volume weights; state averages use reference-volume weights.
+Saved cell fields are centroid-recovered, so these are postprocessing averages rather than exact Gauss-point histories.
+
+- [x] User approves the final SVG plot presentation.
+- [x] Archive the accepted input decks, mesh/property data, simulation HDF5 databases/logs, and reports in
+  `verification/multiphase_trip_results/8A56F_8x8x8/` after approval. Git LFS stores simulation databases/logs and
+  binary property/history files. The non-public constitutive source and compiled library remain outside the repository.
+
+The archive README records the observed runtime backend override and the scope of the recorded Git revision;
+original decks, databases, and logs are retained without rewriting their provenance or numerical content.
+
+Higher-resolution runs for solver performance and visualization are deferred, not closure requirements. Standalone
+finite-load characterization beyond the existing interface checks is likewise not required for the accepted scope.
+Commit/merge/tag decisions follow the final artifact handoff; they are not additional numerical investigations.
 
 Current interface review and audits are recorded in `MULTIPHASE_TRIP_INTERFACE_REFINEMENT.md`. Runtime Euler angles
 use ABI version 5 with tangent-request control. The legacy UMAT is demonstrably unsafe at zero duration; its strict positive-time

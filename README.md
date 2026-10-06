@@ -27,7 +27,7 @@ The production element tangents use the specification's current-configuration Tr
 * [x] Validate J2 plasticity model against benchmarks from literature.
 * [x] Add timing information around time consuming parts of the solver for debugging and observability.
 * [x] Add selectable SciPy/SuperLU_MT sparse-direct solvers for the global KKT system.
-* [ ] Add crystal plasticity model with its Python bridge and solve examples on multi-grain RVEs.
+* [x] Integrate the external multiphase TRIP steel model through its Python bridge and solve periodic multi-grain RVEs.
 
 ### Parallel global linear solver
 
@@ -305,6 +305,16 @@ python -m verification.run_j2_numba_feasibility material
 The earlier full-solver Python/Numba comparison databases and their
 `compare-prisms` reader remain as historical adoption evidence.  Backend
 selection is no longer exposed by the solver or formulation-study commands.
+
+## Multiphase TRIP results
+
+The accepted 8A/56F 8³ periodic simple-shear and isochoric-uniaxial runs, input decks, mesh/property data,
+and SVG/numerical reports are archived in
+[`verification/multiphase_trip_results/`](verification/multiphase_trip_results/README.md).
+Git LFS stores the simulation databases/logs and binary property/history files. Retrieve them with `git lfs pull`
+when using a clone. The external constitutive source and compiled library are not distributed in this repository;
+reading results and regenerating reports does not require them. The archive README records runtime solver
+overrides, provenance limitations, and reproduction commands.
 
 ## Verify
 
