@@ -912,22 +912,20 @@ An iterative KKT backend may be added behind the same interface. Because the gen
 
 ### 16.1 Exact Newton
 
-At every global iteration:
-
-- recompute element stresses/trial state;
-- recompute element tangents;
-- reassemble `K`;
-- rebuild/refactor the KKT matrix.
+At every current iterate, obtain element stress/trial state and a tangent assembled at that iterate, either by
+consuming the accepted line-search candidate assembly or by a fresh constitutive/element evaluation from committed
+state `n`. Rebuild/refactor the complete KKT matrix before each correction, not when the iterate already converged.
 
 ### 16.2 Modified Newton
 
 At every global iteration:
 
-- **still recompute** element stresses, internal force, and trial state from the committed state `n` to the current trial endpoint;
-- reuse the selected frozen `K` and KKT factorization according to the policy;
+- **still evaluate** element stresses, internal force, and trial state from the committed state `n` to each distinct
+  trial endpoint; an accepted line-search candidate assembly may be consumed without evaluating the same endpoint twice;
+- form `K` at iteration zero of each increment attempt and reuse that frozen `K` and KKT factorization for its remaining corrections;
 - set `need_tangent=False` on material calls when no tangent refresh is needed.
 
-A new increment attempt must have a valid tangent/factorization before its first correction unless an explicit safe reuse policy is implemented.
+A new increment attempt, including each cutback retry, must form a fresh tangent/factorization before its first correction.
 
 Material implementations that support residual-only evaluation must honor the request through their integration
 boundary, not merely discard an already-computed tangent. The TRIP phase routines skip their nine-component
@@ -960,7 +958,15 @@ $$
 M(\alpha)\le (1-c\alpha)M_i.
 $$
 
-If no admissible residual-reducing candidate exists at or above `line_search_min_alpha`, report a recoverable global failure and let the normal increment cutback logic restart from the committed state. For exact Newton, a candidate assembly may compute and retain its tangent for the next iteration; this is still exact Newton because the retained tangent belongs to the accepted candidate iterate. Log the accepted `alpha`, number of trials/backtracks, candidate merit, count of recoverable candidate rejections, and the last such failure message in the standalone JSON history.
+Test at most `line_search_max_backtracks + 1` candidates (initial full step plus reductions), stopping before any
+candidate with `alpha < line_search_min_alpha`. If none is admissible and residual-reducing, report a recoverable
+global failure and let increment cutback restart from the committed state. Exact Newton requests and assembles a
+tangent for every candidate, including rejected candidates. Modified Newton candidates request no tangent.
+Both methods retain the accepted candidate assembly for the next iteration, so no new primary assembly is needed
+there; exact Newton uses that candidate's tangent for its next correction. This remains exact Newton because the
+tangent belongs to the current accepted iterate. Line-search acceptance does not commit material state.
+Log the accepted `alpha`, number of trials/backtracks, candidate merit, count of recoverable candidate rejections,
+and the last such failure message in the standalone JSON history.
 
 Supported controls and defaults are:
 
@@ -1021,10 +1027,11 @@ $$
 
 No dimensionless floor is inserted into either relative scale; the absolute tolerance handles the zero-load/zero-constraint case.
 
-If `check_displacement_increment = true`, also require after the proposed Newton correction
+The policy is residual-only if `check_displacement_increment` is absent or false. If it is true, also test the last
+accepted displacement correction at the current iterate (`last_du`, initialized to zero for each attempt):
 
 $$
-\|\Delta\mathbf u\|_\infty
+\|\mathbf s_i\|_\infty
 \le
 \epsilon_u^{\mathrm{abs}}
 +
@@ -1035,7 +1042,13 @@ $$
 \right).
 $$
 
-This displacement-correction test is supplementary. It must never replace equilibrium and constraint residual checks.
+Here `s_0 = 0` and `s_i = u_i - u_(i-1)` for `i > 0`: it is `alpha * delta_u` when backtracking is active and
+`delta_u` otherwise. This test is supplementary, not an alternative Newton method; it must never replace either
+residual check. The supplied example decks enable it.
+
+`nonlinear.max_iterations` is the maximum number of corrections. Evaluate convergence at iterates zero through
+that limit inclusive, allowing the final permitted correction to converge. At the final iterate, failed convergence
+raises recoverable nonconvergence without solving another correction.
 
 
 The corresponding TOML fields are `force_atol`, `force_rtol`, `constraint_atol`, `constraint_rtol`, `displacement_atol`, and `displacement_rtol`.

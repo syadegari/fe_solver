@@ -12,6 +12,7 @@
 \usepackage{xcolor}
 \usepackage[most]{tcolorbox}
 \usepackage{listings}
+\usepackage{algorithm,algpseudocode}
 
 \geometry{left=2.2cm,right=2.2cm,top=2.2cm,bottom=2.4cm}
 \setlength{\parindent}{0pt}
@@ -1440,13 +1441,13 @@ $\vct f^{\mathrm{int}}=\vct f^{\mathrm{con}}$.  Isoparametric completeness then 
 macroscopic nominal-stress diagnostic directly from the nodal constraint reactions:
 \begin{equation}
 \boxed{
-\overline{\P}
-=\frac{1}{|\Omega_0|}\int_{\Omega_0}\P\,\mathrm dV_0
+\overline{\Pstress}
+=\frac{1}{|\Omega_0|}\int_{\Omega_0}\Pstress\,\mathrm dV_0
 =\frac{1}{|\Omega_0|}\sum_a \bs f^{\mathrm{con}}_a\otimes\bs X_a .
 }
 \label{eq:periodic-average-P-reaction}
 \end{equation}
-Indeed, $\sum_a \bs f^{\mathrm{int}}_a\otimes\bs X_a$ reduces to the volume integral of $\P$
+Indeed, $\sum_a \bs f^{\mathrm{int}}_a\otimes\bs X_a$ reduces to the volume integral of $\Pstress$
 because $\sum_a \bs X_a\otimes\Grad N_a=\I$.  Equation~\eqref{eq:periodic-average-P-reaction}
 uses the complete assembled nodal reaction vector, including the anchor reaction; it does not assign physical
 meaning to individual multiplier coordinates.  If body forces or independent nodal loads are present, their
@@ -1473,11 +1474,22 @@ where
 \end{equation}
 contains the assembled material, geometric, and $\bar F$ projection terms appropriate to the selected elements.
 
+Distinguish this current Jacobian from the tangent selected for the solve:
+\begin{equation}
+\widehat{\vct K}^{(i)}=
+\begin{cases}
+\vct K^{(i)}, & \text{exact (full) Newton},\\
+\vct K^{(0)}, & \text{modified Newton}.
+\end{cases}
+\label{eq:kkt-tangent-choice}
+\end{equation}
+The modified-Newton tangent and its KKT factorization are frozen for one increment \emph{attempt}, not across cutbacks. Its first tangent is evaluated at $\vct u^{(0)}=\vct u_n$ for the positive duration $t_{n+1}-t_n$; it is not a saved tangent evaluated at zero duration at $t_n$.
+
 At Newton iteration $i$ the simultaneous correction is obtained from
 \begin{equation}
 \boxed{
 \begin{bmatrix}
-\vct K^{(i)} & \vct C^\top\\
+\widehat{\vct K}^{(i)} & \vct C^\top\\
 \vct C & \vct0
 \end{bmatrix}
 \begin{bmatrix}
@@ -1500,6 +1512,35 @@ The undamped updates are
 \end{align}
 No constrained displacement is eliminated, and $\vct K$ is not separately factorized. The complete sparse matrix of Eq.~\eqref{eq:kkt-newton} is supplied to the linear solver.
 
+\subsection{Convergence and residual-based backtracking}
+\label{sec:global-convergence-backtracking}
+
+At the current iterate, the absolute-plus-relative tolerances are
+\begin{equation}
+\begin{aligned}
+\epsilon_{f,i}&=\epsilon_f^{\mathrm{abs}}+\epsilon_f^{\mathrm{rel}}
+\max\bigl(\lVert\vct f^{\mathrm{int},(i)}\rVert_\infty,
+\lVert\vct f^{\mathrm{ext}}\rVert_\infty,
+\lVert\vct C^\top\vct\lambda^{(i)}\rVert_\infty\bigr),\\
+\epsilon_{c,i}&=\epsilon_c^{\mathrm{abs}}+\epsilon_c^{\mathrm{rel}}
+\max\bigl(\lVert\vct C\vct u^{(i)}\rVert_\infty,
+\lVert\vct d\rVert_\infty\bigr).
+\end{aligned}
+\label{eq:kkt-convergence-scales}
+\end{equation}
+Both residual tests, $\lVert\vct r_u^{(i)}\rVert_\infty\leq\epsilon_{f,i}$ and
+$\lVert\vct r_c^{(i)}\rVert_\infty\leq\epsilon_{c,i}$, are mandatory.
+An optional supplementary test uses the \emph{last accepted displacement correction}
+\begin{gather}
+\vct s^{(0)}=\vct0,\qquad
+\vct s^{(i)}=\vct u^{(i)}-\vct u^{(i-1)}\quad(i>0),\notag\\
+\lVert\vct s^{(i)}\rVert_\infty\leq
+\epsilon_u^{\mathrm{abs}}+\epsilon_u^{\mathrm{rel}}
+\max\bigl(\lVert\vct u^{(i)}\rVert_\infty,\lVert\vct u_n\rVert_\infty\bigr).
+\label{eq:kkt-correction-convergence}
+\end{gather}
+Thus the two convergence policies are residual-only, or residuals \emph{and} a small accepted correction; they are independent of the choice of Newton method. The supplied examples enable the supplementary test by setting \texttt{check\_displacement\_increment} to \texttt{true}. If the option is absent or false, only the residual tests apply. A small correction alone never establishes equilibrium.
+
 When globalization is required, the same KKT solution is retained as the Newton search direction but the update is damped,
 \begin{align}
 \vct u^{(i+1)}&=\vct u^{(i)}+\alpha_i\Delta\vct u^{(i)},\\
@@ -1517,18 +1558,60 @@ M_i=\max\left(
 \right),
 \label{eq:kkt-merit}
 \end{equation}
-where $\epsilon_{f,i}$ and $\epsilon_{c,i}$ are the absolute-plus-relative convergence tolerances evaluated at that base iterate.  Starting with $\alpha_i=1$, reduce it geometrically until the candidate is kinematically admissible and
+The same base-iterate tolerances $\epsilon_{f,i}$ and $\epsilon_{c,i}$ are held fixed for every candidate in this line search; they are reevaluated at the next Newton iterate. For the candidate pair $(\vct u_\alpha,\vct\lambda_\alpha)=(\vct u^{(i)},\vct\lambda^{(i)})+\alpha(\Delta\vct u^{(i)},\Delta\vct\lambda^{(i)})$, define
+\begin{equation}
+M(\alpha)=\max\left(
+\frac{\lVert\vct r_u(\vct u_\alpha,\vct\lambda_\alpha)\rVert_\infty}{\epsilon_{f,i}},
+\frac{\lVert\vct r_c(\vct u_\alpha)\rVert_\infty}{\epsilon_{c,i}}
+\right).
+\end{equation}
+If a tolerance is zero, its ratio is interpreted as zero for a zero residual and infinity otherwise. Starting with $\alpha_i=1$, reduce it geometrically until the candidate is kinematically admissible and
 \begin{equation}
 M(\alpha_i)\leq (1-c\alpha_i)M_i,
 \qquad 0\leq c<1.
 \label{eq:kkt-armijo}
 \end{equation}
-Every candidate constitutive update is evaluated from the same committed pair $(\F_n,\mathcal H_n)$, exactly as for an ordinary Newton trial.  Hence a rejected candidate cannot contaminate history.  A nonpositive trial Jacobian or another recoverable local failure rejects that search length; failure to find an admissible decreasing length is itself a recoverable increment failure and may invoke pseudo-time cutback.
+Every candidate constitutive update is evaluated from the same committed pair $(\F_n,\mathcal H_n)$, exactly as for an ordinary Newton trial. Hence a rejected candidate cannot contaminate history. A nonpositive trial Jacobian or another recoverable local failure rejects that search length. Backtracking tests $\alpha=1,\beta,\beta^2,\ldots$ with $0<\beta<1$, bounded by a minimum length $\alpha_{\min}$ and at most $B_{\max}$ reductions. Failure to find an admissible decreasing length within these limits is a recoverable increment failure and invokes cutback. Fatal model/setup errors are not repaired by backtracking.
 
 The merit test requires stresses and trial state, not their endpoint derivative. A residual-only evaluation may
 therefore omit constitutive differentiation and stiffness construction without changing the integration map.
-The current exact-Newton implementation nevertheless constructs each candidate tangent so that the accepted
-assembly can be reused at the next iteration; modified-Newton candidates omit it and retain the frozen tangent.
+The current exact-Newton implementation nevertheless constructs each candidate tangent, including rejected candidates, so that the accepted assembly can be reused at the next iteration. Modified-Newton candidates omit it and retain the frozen tangent. Both methods cache the accepted candidate's stress, trial state, and internal-force assembly; exact Newton also caches its tangent. The next iteration consumes this assembly instead of reintegrating the same endpoint. A line-search acceptance is not a material-state commitment. The supplementary correction test uses $\vct s^{(i+1)}=\alpha_i\Delta\vct u^{(i)}$, not the undamped direction.
+
+\subsection{Local error analysis of the search direction}
+\label{sec:kkt-search-error}
+
+Let $\vct x=(\vct u^\top,\vct\lambda^\top)^\top$, $\vct r=\mathcal R(\vct x)$, and
+$\vct J^{(i)}=D\mathcal R(\vct x^{(i)})$ be the \emph{actual} KKT Jacobian. For a smooth residual with a locally Lipschitz Jacobian, and fixed committed history and target time,
+\begin{equation}
+\vct r(\vct x^{(i)}+\alpha\Delta\vct x^{(i)})
+=\vct r^{(i)}+\alpha\vct J^{(i)}\Delta\vct x^{(i)}
++\mathcal O\bigl(\alpha^2\lVert\Delta\vct x^{(i)}\rVert^2\bigr).
+\end{equation}
+For exact Newton with an accurately solved correction, $\vct J^{(i)}\Delta\vct x^{(i)}=-\vct r^{(i)}$, hence
+\begin{equation}
+\boxed{\vct r(\alpha)=(1-\alpha)\vct r^{(i)}
++\mathcal O\bigl(\alpha^2\lVert\Delta\vct x^{(i)}\rVert^2\bigr).}
+\label{eq:kkt-search-exact-error}
+\end{equation}
+At fixed direction, halving $\alpha$ approximately quarters the leading quadratic \emph{remainder}, not the total residual: the retained term approaches $\vct r^{(i)}$ as $\alpha\to0$. Near a regular solution, a full step cancels that first-order term and is typically acceptable. This is a local smoothness argument, not a guarantee of success within finite backtracking limits or across nonsmooth constitutive transitions.
+
+For modified Newton, the solve instead uses $\widehat{\vct J}^{(i)}$ with mechanical block $\vct K^{(0)}$. Substitution gives
+\begin{equation}
+\boxed{\begin{aligned}
+\vct r(\alpha)={}&(1-\alpha)\vct r^{(i)}
++\alpha\bigl(\vct J^{(i)}-\widehat{\vct J}^{(i)}\bigr)\Delta\vct x^{(i)}\\
+&+\mathcal O\bigl(\alpha^2\lVert\Delta\vct x^{(i)}\rVert^2\bigr).
+\end{aligned}}
+\label{eq:kkt-search-modified-error}
+\end{equation}
+The Jacobian-mismatch term is \emph{first order} in $\alpha$; reducing the search length does not eliminate it relative to the intended first-order residual reduction. A frozen-tangent direction need not be a descent direction for the chosen merit, so arbitrarily small steps need not satisfy the acceptance test. Backtracking can control such directions but cannot guarantee their success. Approximate material tangents or inexact linear solves likewise weaken the exact-Newton cancellation.
+
+Both methods retain the exact linear constraint block, so their accurately solved corrections satisfy
+\begin{equation}
+\vct C\Delta\vct u^{(i)}=-\vct r_c^{(i)},\qquad
+\vct r_c(\alpha)=(1-\alpha)\vct r_c^{(i)}.
+\end{equation}
+A full step therefore removes the constraint residual up to roundoff, even in modified Newton; damping contracts it rather than eliminating it immediately.
 
 For the linear special case $\vct R=\vct K\vct u-\vct f$, Eq.~\eqref{eq:kkt-newton} reduces directly to
 \begin{equation}
@@ -1601,7 +1684,7 @@ The constraint blocks do not alter the local constitutive update. They enter onl
 
 A consistent local algorithmic tangent makes the assembled mechanical block $\vct K$ consistent with the actual discrete constitutive update. This supports quadratic convergence when the global residual is smooth, the active set is stable, the full tangent is rebuilt, and the linear KKT system is solved sufficiently accurately. The Lagrange-multiplier constraints do not require a different material tangent.
 
-A modified Newton method may hold $\vct K$ fixed over several iterations. This does not alter material state logic: at every trial displacement the material update and internal force must still be reevaluated from the committed $t_n$ state. Only the tangent assembly/factorization may be skipped according to the selected modified-Newton policy. The first correction of a new increment attempt must have a valid tangent/factorization; a modified-Newton policy therefore refreshes at least once at the start of each attempt unless it explicitly and safely reuses a tangent from the same accepted-state linearization.
+A modified Newton method holds $\vct K$ fixed over the remaining iterations of an attempt. This does not alter material state logic: at every distinct trial displacement the material update and internal force are still evaluated from the committed $t_n$ state. Consuming an accepted candidate assembly avoids repeating the same evaluation. Only tangent assembly/factorization is skipped. The first correction of every new attempt, including a cutback retry, uses a freshly formed tangent/factorization.
 
 
 
@@ -1840,52 +1923,54 @@ and store only trial material states until global convergence. There is no centr
 \section{Global nonlinear solution algorithm}
 \label{sec:final-global-algorithm}
 
-The element algorithms provide the local residual, tangent, and trial constitutive state. The global procedure below states the mathematical solution sequence without prescribing mesh-file, programming-language, or storage details.
+Algorithm~\ref{alg:global-newton} covers one increment \emph{attempt} with backtracking enabled. Write $\vct x=(\vct u,\vct\lambda)$ and suppress the trial endpoint subscript $n+1$. Every constitutive evaluation uses the same committed $(\vct u_n,\mathcal H_n)$ and the current trial displacement, never a previous Newton trial history. Convergence requires both residual tests and, when enabled, the accepted-correction test of Section~\ref{sec:global-convergence-backtracking}.
 
-\begin{algorithmbox}{Global constrained Newton algorithm}
-\textbf{Committed input at $t_n$:} $\vct u_n$, $\vct\lambda_n$, committed Gauss-point states $\mathcal H_n$, admissible next pseudo-time $t_{n+1}$, external loading at $t_{n+1}$, and the affine constraint data $\vct C\vct u=\vct d(t_{n+1})$.
+\begin{algorithm}[H]
+\caption{Full or modified Newton with bounded backtracking: one increment attempt}
+\label{alg:global-newton}
+\small
+\begin{algorithmic}[1]
+\Require method, committed $(\vct x_n,\mathcal H_n)$, target $t_{n+1}>t_n$, iteration/search limits
+\State $\vct x^{(0)}\gets\vct x_n$, $\vct s^{(0)}\gets\vct0$
+\For{$i=0,\ldots,N_{\max}$}
+    \State Obtain assembly at $\vct u^{(i)}$ (evaluate or reuse accepted candidate)
+    \State Form $\vct r_u^{(i)},\vct r_c^{(i)}$ and current tolerances
+    \If{converged}
+        \State Commit $\vct x^{(i)}$ and trial history; \Return success
+    \EndIf
+    \If{$i=N_{\max}$}
+        \State \Return recoverable failure
+    \EndIf
+    \If{full Newton \textbf{or} $i=0$}
+        \State $\widehat{\vct K}\gets\vct K^{(i)}$; factor the KKT matrix
+    \EndIf
+    \State Solve Eq.~\eqref{eq:kkt-newton} for $\Delta\vct x^{(i)}$
+    \State Evaluate $M_i$ (Eq.~\eqref{eq:kkt-merit}); $\alpha\gets1$; accepted $\gets$ false
+    \For{$b=0,\ldots,B_{\max}$}
+        \If{$\alpha<\alpha_{\min}$}
+            \State \textbf{break}
+        \EndIf
+        \State $\vct x_\alpha\gets\vct x^{(i)}+\alpha\Delta\vct x^{(i)}$
+        \State Evaluate candidate assembly and $M(\alpha)$
+        \If{admissible \textbf{and} $M(\alpha)\leq(1-c\alpha)M_i$}
+            \State Cache candidate assembly; accepted $\gets$ true; \textbf{break}
+        \EndIf
+        \State $\alpha\gets\beta\alpha$
+    \EndFor
+    \If{not accepted}
+        \State \Return recoverable failure
+    \EndIf
+    \State $\vct x^{(i+1)}\gets\vct x_\alpha$, $\vct s^{(i+1)}\gets\alpha\Delta\vct u^{(i)}$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
 
-\begin{enumerate}[leftmargin=1.7em,label=\arabic*.,itemsep=0.18em,topsep=0.2em]
-\item Initialize a trial pair $\vct u_{n+1}^{(0)},\vct\lambda_{n+1}^{(0)}$ from the committed state or a predictor. Keep every component of $\mathcal H_n$ immutable.
-\item For Newton iteration $i=0,1,\ldots,N_{\max}-1$:
-  \begin{enumerate}[leftmargin=1.5em,label=\alph*.,itemsep=0.12em,topsep=0.1em]
-  \item For every element, gather $\vct u_n^e$ and $\vct u_{n+1}^{e,(i)}$. Reconstruct $\F_n$ and $\F_{n+1}^{(i)}$ from nodal kinematics at each integration point and evaluate the appropriate standard or Hex8-$\bar F$ element algorithm from the same committed material state $\mathcal H_n^e$.
-  \item Assemble
-  \begin{equation*}
-  \vct f^{\mathrm{int},(i)}=\sum_e\mathcal A_e\vct f^{e,\mathrm{int},(i)},
-  \qquad
-  \vct K^{(i)}=\sum_e\mathcal A_e\vct K_e^{(i)}\mathcal A_e^\top,
-  \end{equation*}
-  where $\mathcal A_e$ denotes the Boolean element-to-global assembly operator.
-  \item Form the augmented residual
-  \begin{equation*}
-  \vct r_u^{(i)}=\vct f^{\mathrm{int},(i)}-\vct f^{\mathrm{ext}}(t_{n+1})+\vct C^\top\vct\lambda_{n+1}^{(i)},
-  \qquad
-  \vct r_c^{(i)}=\vct C\vct u_{n+1}^{(i)}-\vct d(t_{n+1}).
-  \end{equation*}
-  \item If equilibrium and constraint tolerances are satisfied, accept the trial state and proceed to Step~3.
-  \item Otherwise solve
-  \begin{equation*}
-  \begin{bmatrix}
-  \vct K^{(i)} & \vct C^\top\\
-  \vct C & \vct0
-  \end{bmatrix}
-  \begin{bmatrix}
-  \Delta\vct u^{(i)}\\
-  \Delta\vct\lambda^{(i)}
-  \end{bmatrix}
-  =-
-  \begin{bmatrix}
-  \vct r_u^{(i)}\\
-  \vct r_c^{(i)}
-  \end{bmatrix}.
-  \end{equation*}
-  For exact Newton, refresh $\vct K^{(i)}$ every iteration. For modified Newton, a previously formed tangent may be retained while stresses, residuals, and trial constitutive states are still reevaluated at every new $\vct u_{n+1}^{(i)}$.
-  \item Apply the full correction, or, when globalization is enabled, select an admissible residual-reducing $\alpha_i$ by Eqs.~\eqref{eq:kkt-damped-update}--\eqref{eq:kkt-armijo}. Reevaluate every search candidate from the unchanged committed material state $\mathcal H_n$.
-  \end{enumerate}
-\item On convergence, atomically commit $\vct u_{n+1}$, $\vct\lambda_{n+1}$, and the trial Gauss-point states returned by the converged element evaluations, and retain their accepted stresses for observation. Equilibrium checks use the converged response. Optional directional-tangent checks perturb this same positive-time increment from its original committed history before that history is overwritten. On recoverable failure or nonconvergence, discard the entire trial endpoint and repeat the same $n\rightarrow n+1$ advance with a smaller pseudo-time increment from the unchanged committed state.
-\end{enumerate}
-\end{algorithmbox}
+\paragraph*{Evaluation and reuse.}
+Full Newton evaluates tangents at all candidates, including rejected ones, and reuses the accepted assembly at the next iteration. Modified Newton evaluates a tangent only at iteration zero and reuses its KKT factorization; its candidates are residual-only. The merit scales stay fixed during each search. Recoverable candidate failures reject that length; search acceptance does not commit history. With backtracking disabled, omit the search and take $\alpha=1$ without a candidate evaluation or cache.
+
+Recoverable attempt failure discards trial data, caches, and factors; the time controller cuts back and retries from the unchanged committed state with a fresh first tangent. Increment/retry limits may stop the analysis; model/setup errors are fatal. After acceptance, the controller advances time, handles output/restart events, and applies the growth rule.
+
+Cold start initializes history and zero stress; restart restores committed history and accepted stress. Initial output uses this response without zero-time constitutive evolution. Optional final tangent verification uses the original positive-increment history before commitment.
 
 \appendix
 \section{Example constitutive plug-in: finite-strain J2 plasticity}
