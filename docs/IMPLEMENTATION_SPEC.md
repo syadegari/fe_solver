@@ -906,6 +906,9 @@ failure, or exception. Do not separately factor `K` and then eliminate constrain
 
 An iterative KKT backend may be added behind the same interface. Because the generic tangent may be nonsymmetric, do not make MINRES the generic path. GMRES plus an appropriate block/Schur preconditioner, or PETSc/petsc4py field-split machinery, is a later extension.
 
+The active PETSc LGMRES integration plan and proposed nonlinear tolerance profile are tracked in
+[`ITERATIVE_SOLVER_INTEGRATION.md`](ITERATIVE_SOLVER_INTEGRATION.md). They are not yet implemented backend requirements or defaults.
+
 ---
 
 ## 16. Newton and material-state logic
