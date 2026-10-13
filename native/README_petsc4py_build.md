@@ -18,6 +18,14 @@ which mpicxx
 which mpiexec
 ```
 
+Install the Python MPI bindings in the same active environment if absent:
+
+```bash
+python -m pip install mpi4py
+```
+
+The MPI runtime loaded by mpi4py must match the one used to build PETSc.
+
 ## 2. Point PETSc's build at OpenMPI
 
 ```bash
@@ -44,11 +52,8 @@ print("PETSC_DIR:", petsc.get_config()["PETSC_DIR"])
 PY
 ```
 
-For this installation the PETSc prefix was:
-
-```text
-/home/srn/miniconda3/envs/py3.14/lib/python3.14/site-packages/petsc
-```
+The installation prefix is environment-specific; obtain it from the command above
+rather than copying another machine's path.
 
 ## 4. Set PETSC_DIR for building petsc4py
 
@@ -186,7 +191,7 @@ Authorization required, but no authorization protocol specified
 One way to get around this (I checked this and worked on my system) is to set the following env variable before the run or put it in `.bashrc`:
 
 ```bash
- HWLOC_COMPONENTS=-gl
+export HWLOC_COMPONENTS=-gl
 ```
 
 ## Final verified configuration

@@ -4,6 +4,11 @@
 
 This document summarizes the entire solver investigation from the original KKT benchmark through the latest PETSc/MPI tuning results. It is intended to be pasted or uploaded into a future ChatGPT session so work can continue without losing the technical history.
 
+Repository integration note: the original `petsc_mpi_hybrid_bench_1.py` is now
+`benchmark_petsc_kkt.py`. Supply the database and `--group` explicitly; historical
+commands below require those additional arguments. The numerical history below is
+retained as experiment evidence, not rerun integration results.
+
 ---
 
 ## 1. Problem and machine

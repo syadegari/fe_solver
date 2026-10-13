@@ -2,6 +2,16 @@ from __future__ import annotations
 
 import os
 import sys
+import argparse
+from pathlib import Path
+
+_parser = argparse.ArgumentParser(
+    description="Benchmark distributed PETSc LGMRES on a saved KKT system.",
+    epilog="Additional -bench_* PETSc options override the benchmark defaults.",
+)
+_parser.add_argument("database", type=Path, help="HDF5 file containing saved KKT systems")
+_parser.add_argument("--group", required=True, help="HDF5 group, e.g. t_n=0.02/iteration=1")
+_args, _petsc_args = _parser.parse_known_args()
 
 # Keep each MPI rank single-threaded so MPI scaling is not obscured by
 # BLAS/OpenMP oversubscription.
@@ -38,9 +48,8 @@ for _name in (
 # PETSc must see command-line arguments before PETSc is imported.
 import petsc4py
 
-petsc4py.init(sys.argv)
+petsc4py.init([sys.argv[0], *_petsc_args])
 
-from pathlib import Path
 from time import perf_counter
 
 import h5py
@@ -271,7 +280,7 @@ def configure_distributed_block_pc(
     The Schur factorization is LOWER, corresponding structurally to
 
         z_u      ~= K^{-1} r_u
-        z_lambda ~= S^{-1}(C z_u - r_lambda)
+        z_lambda ~= S^{-1}(r_lambda - C z_u)
 
     with PETSc providing distributed approximations to the block
     inverses.
@@ -424,8 +433,8 @@ def main() -> None:
     rank = comm.rank
     size = comm.size
 
-    path = Path(__file__).with_name("kkt_medium.h5")
-    group_name = "t_n=0.02/iteration=1"
+    path = _args.database
+    group_name = _args.group
 
     # --------------------------------------------------------------
     # 1. Load problem.
@@ -532,6 +541,7 @@ def main() -> None:
     set_petsc_option_default(options, "bench_fieldsplit_u_sub_ksp_type", "preonly")
     set_petsc_option_default(options, "bench_fieldsplit_u_sub_pc_type", "ilu")
     set_petsc_option_default(options, "bench_fieldsplit_u_sub_pc_factor_levels", 0)
+    set_petsc_option_default(options, "bench_fieldsplit_u_sub_pc_factor_mat_ordering_type", "natural")
     set_petsc_option_default(options, "bench_fieldsplit_u_pc_asm_type", "basic")
 
 
@@ -544,7 +554,7 @@ def main() -> None:
     #     -C diag(K)^(-1) C^T
     #
     # Use Jacobi for this Schur approximation.  This is the validated
-    # baseline paired with ASM + ILU(1) for the K block.
+    # baseline paired with ASM + ILU(0) for the K block.
     #
     set_petsc_option_default(options, "bench_fieldsplit_lambda_ksp_type", "preonly")
     set_petsc_option_default(options, "bench_fieldsplit_lambda_pc_type", "jacobi")
@@ -554,7 +564,7 @@ def main() -> None:
     # --------------------------------------------------------------
     #
     # RIGHT preconditioning preserves the physical residual b - A x.
-    # With UNPRECONDITIONED norm, petsc_rnorm is ||b - A x||_2.
+    # The monitored norm estimates ||b - A x||_2; check A*x-b independently below.
     #
     ksp.setPCSide(PETSc.PC.Side.RIGHT)
     ksp.setNormType(PETSc.KSP.NormType.UNPRECONDITIONED)
@@ -566,6 +576,10 @@ def main() -> None:
     ksp.setTolerances(rtol=rtol, atol=atol, max_it=max_it)
     # Command-line PETSc options override the defaults above.
     ksp.setFromOptions()
+    rtol, atol, _, max_it = ksp.getTolerances()
+    if (ksp.getPCSide() != PETSc.PC.Side.RIGHT
+            or ksp.getNormType() != PETSc.KSP.NormType.UNPRECONDITIONED):
+        raise ValueError("validation requires RIGHT preconditioning and UNPRECONDITIONED norm")
 
     # --------------------------------------------------------------
     # 5. Validation / fixed-iteration convergence test.
@@ -588,7 +602,7 @@ def main() -> None:
             del ksp_
 
             # With RIGHT preconditioning and UNPRECONDITIONED norm,
-            # PETSc already supplies ||b - A x||_2 here.  Recomputing
+            # PETSc supplies its estimate of ||b - A x||_2 here. Recomputing
             # A x inside this callback would add an unnecessary
             # distributed matrix-vector product on every iteration.
             true_abs = float(petsc_rnorm)
@@ -680,6 +694,7 @@ def main() -> None:
     # reintroduce the old preconditioner bottleneck.
     # --------------------------------------------------------------
     x_global = gather_vector_to_root(x_petsc, comm)
+    ksp_reason = int(ksp.getConvergedReason())
 
     if rank == 0:
         assert x_global is not None
@@ -692,7 +707,7 @@ def main() -> None:
 
         if _BENCH_MODE == "validate":
             print("iteration residuals:")
-            print("  iter    PETSc rnorm       " "true ||Ax-b||/||b||")
+            print("  iter    PETSc rnorm       " "estimated relative residual")
 
             if len(residual_history) <= 30:
                 rows = residual_history
@@ -720,6 +735,13 @@ def main() -> None:
     x_petsc.destroy()
     b_petsc.destroy()
     A_petsc.destroy()
+
+    # Fixed-iteration mode is timing-only, not an accuracy acceptance test.
+    if _BENCH_MODE == "validate" and (
+        ksp_reason <= 0 or not np.isfinite(true_rel_petsc)
+        or true_rel_petsc * b_norm > max(rtol * b_norm, atol)
+    ):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
