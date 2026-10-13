@@ -840,6 +840,14 @@ class TimeRestartTests(unittest.TestCase):
                 # Startup reporting makes no constitutive assembly call.
                 if calls["count"] == 1:
                     raise RecoverableError("deliberate trial failure")
+                if calls["count"] == 2:
+                    # Failure diagnostics must already be on disk before retry.
+                    with (Path(directory) / "run_log.json").open() as stream:
+                        failed_log = json.load(stream)
+                    self.assertEqual(failed_log["increments"], [])
+                    failed = failed_log["newton_history"][-1]
+                    self.assertEqual(failed["failure_message"], "deliberate trial failure")
+                    self.assertEqual(failed["increment_attempt"], 1)
                 return actual_assemble(*args, **kwargs)
 
             with mock.patch("fe_solver.solver.assemble_internal", side_effect=fail_once):

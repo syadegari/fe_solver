@@ -21,7 +21,8 @@ def main(argv: list[str] | None = None) -> None:
     solve.add_argument("--stop-time", type=float, default=None)
     solve.add_argument(
         "--num-processes", type=int, default=1,
-        help="persistent worker processes for complete element evaluations (default: 1)",
+        help="strictly element-processing parallelism: persistent local worker processes "
+             "(default: 1); does not set MPI ranks or linear-solver threads",
     )
     solve.add_argument(
         "--debug-timing", action="store_true",
@@ -29,9 +30,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     solve.add_argument(
         "--solver-backend",
-        choices=("scipy_splu", "superlu_mt"),
+        choices=("scipy_splu", "superlu_mt", "petsc_lgmres"),
         default=None,
         help="override linear_solver.backend from the analysis deck",
+    )
+    solve.add_argument(
+        "--petsc-options", type=Path, default=None, metavar="FILE",
+        help="separate PETSc tuning TOML (overrides packaged petsc_lgmres.toml); "
+             "MPI ranks are selected with mpiexec -n, not --num-processes",
     )
     solve.add_argument(
         "--num-threads",
@@ -56,9 +62,12 @@ def main(argv: list[str] | None = None) -> None:
             debug_timing=args.debug_timing,
             solver_backend=args.solver_backend,
             num_threads=args.num_threads,
+            petsc_options=args.petsc_options,
         )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")
+    if result is None:
+        return  # Non-root PETSc ranks served linear solves; no FE result/output.
     # TODO: why is the reaction and maximum_reaction in the cli module? 
     #       Get this outside of the cli even if 
     #       if it means it lives in a separate module in a one-liner function

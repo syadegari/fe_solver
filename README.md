@@ -105,6 +105,50 @@ The bridge is loaded from `build/native/libsuperlu_mt_bridge.so` only when `supe
 implicit thread-count default; omitting `--num-threads` is an input error. The selected backend and its thread count are
 recorded in `run_log.json`.
 
+PETSc LGMRES is a third selectable backend; both direct backends remain available.
+See [PETSc installation notes](native/README_petsc4py_build.md). MPI ranks and local
+element workers are independent execution choices:
+
+```bash
+mpiexec --bind-to none -n 16 python -m fe_solver solve INPUT.toml \
+  --solver-backend petsc_lgmres --num-processes 16
+```
+
+Only rank zero runs the FE analysis, local element pool, and output. Other ranks
+participate in distributed PETSc linear algebra. `--num-processes` strictly controls
+element processing; it sets neither MPI ranks nor SuperLU_MT threads. On a single
+machine, OpenMPI's `--bind-to none` avoids restricting rank zero's whole worker pool
+to one core. An explicit suitable affinity allocation is also possible. MPI ranks
+wait while elements are processed, and element workers wait during the global solve;
+their counts need not be added as continuously CPU-active workers, but both occupy memory.
+
+The separate [PETSc options file](fe_solver/petsc_lgmres.toml) contains the recommended
+defaults. Copy/edit it and pass `--petsc-options FILE`, or provide a flat TOML file
+with just overrides (for example `fieldsplit_u_pc_asm_overlap = 0`). The path is
+relative to the invocation directory. No PETSc tuning knobs are added to the physics
+deck. Overlap 1 is the baseline; overlap 0 was fastest for the tested 16-rank frozen
+matrix but was less robust across rank counts. Actual options and linear convergence
+diagnostics are saved in `run_log.json`. Existing nonlinear tolerances remain unchanged.
+
+For bounded MPI validation with two element workers and both Newton variants:
+
+```bash
+mpiexec --bind-to none -n 2 python -m verification.check_petsc_solver
+```
+
+For frozen-matrix overlap comparisons, supply the database and exact HDF5 group:
+
+```bash
+mpiexec -n 16 python native/benchmark_petsc_kkt.py KKT.h5 \
+  --group 't_n=0.02/iteration=1' -bench_fieldsplit_u_pc_asm_overlap 1
+mpiexec -n 16 python native/benchmark_petsc_kkt.py KKT.h5 \
+  --group 't_n=0.02/iteration=1' -bench_fieldsplit_u_pc_asm_overlap 0
+```
+
+Retain the same rank count, matrix, and tolerances when comparing overlap. The
+benchmark exits nonzero if validation fails. See the
+[integration status](docs/ITERATIVE_SOLVER_INTEGRATION.md) before production use.
+
 Element evaluation defaults to the serial reference path. To reuse two local worker processes throughout the solve:
 
 ```bash

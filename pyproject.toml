@@ -21,3 +21,6 @@ fe-solver = "fe_solver.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["fe_solver*"]
+
+[tool.setuptools.package-data]
+fe_solver = ["petsc_lgmres.toml"]

@@ -1,7 +1,7 @@
 """Sparse KKT factorization backends used by the nonlinear solver."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 import warnings
@@ -26,9 +26,10 @@ SUPERLU_MT_LIBRARY = (
 class LinearSolverConfig:
     backend: str
     num_threads: int | None = None
+    petsc_session: object | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.backend not in {"scipy_splu", "superlu_mt"}:
+        if self.backend not in {"scipy_splu", "superlu_mt", "petsc_lgmres"}:
             raise ModelError(f"unsupported linear solver backend {self.backend!r}")
         if self.backend == "superlu_mt":
             if (
@@ -67,7 +68,14 @@ def factor_kkt(
     """Build and factor the complete sparse KKT matrix."""
     config = config or LinearSolverConfig("scipy_splu")
     zero = sparse.csr_matrix((C.shape[0], C.shape[0]), dtype=C.dtype)
-    kkt = sparse.bmat([[K, C.T], [C, zero]], format="csc")
+    kkt = sparse.bmat(
+        [[K, C.T], [C, zero]],
+        format="csr" if config.backend == "petsc_lgmres" else "csc",
+    )
+    if config.backend == "petsc_lgmres":
+        if config.petsc_session is None:
+            raise ModelError("petsc_lgmres requires an active PetscSession")
+        return config.petsc_session.setup(kkt, K.shape[0])
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", MatrixRankWarning)

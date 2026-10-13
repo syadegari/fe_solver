@@ -112,6 +112,8 @@ def print_linear_system_summary(summary: dict[str, object]) -> None:
     backend_description = str(linear["backend"])
     if "num_threads" in linear["options"]:
         backend_description += f" ({linear['options']['num_threads']} threads)"
+    if "mpi_ranks" in linear["options"]:
+        backend_description += f" ({linear['options']['mpi_ranks']} MPI ranks)"
     print(
         f"linear system: {backend_description} {system['name']}; "
         f"{primary['name']} {primary['shape'][0]} x {primary['shape'][1]} with "

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 from time import perf_counter_ns
 from typing import Callable
@@ -17,7 +18,7 @@ from .assembly import (
     commit_trial_states,
     observe_committed,
 )
-from .config import Deck
+from .config import Deck, load_deck
 from .constraints import ConstraintSystem
 from .execution import ElementExecutor
 from .io import HDF5ResultWriter, load_restart, write_restart, write_run_log
@@ -241,12 +242,16 @@ def _newton_attempt(
                     with timer(record, "kkt_factorization_wall_seconds"):
                         factor = _factor_kkt(frozen_K, C, ordering, linear_solver)
                 assert factor is not None
-                with timer(record, "kkt_solve_wall_seconds"):
-                    correction = solve_factor(
-                        factor,
-                        -np.concatenate([np.asarray(r_u), np.asarray(r_c)]),
-                        linear_solver,
-                    )
+                try:
+                    with timer(record, "kkt_solve_wall_seconds"):
+                        correction = solve_factor(
+                            factor,
+                            -np.concatenate([np.asarray(r_u), np.asarray(r_c)]),
+                            linear_solver,
+                        )
+                finally:
+                    if linear_solver.backend == "petsc_lgmres":
+                        record["linear_solve"] = dict(factor.diagnostics)
                 if method == "newton":
                     close_factor(factor)
                     factor = None
@@ -385,17 +390,61 @@ def run_analysis(
     debug_timing: bool = False,
     solver_backend: str | None = None,
     num_threads: int | None = None,
-) -> AnalysisResult:
+    petsc_options: str | Path | None = None,
+) -> AnalysisResult | None:
+    """Run one FE analysis; MPI ranks other than zero serve PETSc solves only."""
     analysis_wall_start = perf_counter_ns()
+    source = (
+        load_deck(deck_or_path)
+        if isinstance(deck_or_path, (str, Path)) else deck_or_path
+    )
+    deck = source.deck if isinstance(source, PreparedAnalysis) else source
+    linear_solver = LinearSolverConfig(
+        solver_backend or str(deck.data["linear_solver"]["backend"]), num_threads,
+    )
+    options = dict(
+        stop_time=stop_time, num_processes=num_processes, debug_timing=debug_timing,
+        analysis_wall_start=analysis_wall_start,
+    )
+    if linear_solver.backend != "petsc_lgmres":
+        if any(int(os.environ.get(name, "1")) > 1 for name in (
+            "OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "PMIX_SIZE", "MV2_COMM_WORLD_SIZE",
+        )):
+            raise ModelError("multi-rank MPI launch requires petsc_lgmres; run direct backends without mpiexec")
+        if petsc_options is not None:
+            raise ModelError("--petsc-options is valid only with petsc_lgmres")
+        return _run_analysis(source, linear_solver=linear_solver, **options)
+
+    # Lazy import and initialization occur here, never at module import or in
+    # element-worker startup. Only root constructs the mesh, pool and writers.
+    from .petsc_solver import PetscSession
+
+    with PetscSession(petsc_options) as session:
+        if session.rank != 0:
+            status = session.serve()
+            if status:
+                raise SystemExit(status)
+            return None
+        linear_solver = LinearSolverConfig("petsc_lgmres", petsc_session=session)
+        return _run_analysis(source, linear_solver=linear_solver, **options)
+
+
+def _run_analysis(
+    deck_or_path: PreparedAnalysis | Deck,
+    *,
+    stop_time: float | None,
+    num_processes: int,
+    debug_timing: bool,
+    linear_solver: LinearSolverConfig,
+    analysis_wall_start: int | None = None,
+) -> AnalysisResult:
+    if analysis_wall_start is None:
+        analysis_wall_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
     deck = prepared.deck
     mesh = prepared.mesh
     model = prepared.model
     constraints = prepared.constraints
-    linear_solver = LinearSolverConfig(
-        solver_backend or str(deck.data["linear_solver"]["backend"]),
-        num_threads,
-    )
     events = prepared.events.copy()
     restart_times = prepared.restart_times
     analysis = deck.data["analysis"]
@@ -464,10 +513,19 @@ def run_analysis(
             "multiplier": int(constraints.C.shape[0]),
         },
         solution_options={
-            "ordering": str(deck.data["linear_solver"].get("ordering", "COLAMD")),
+            **(
+                {"ordering": str(deck.data["linear_solver"].get("ordering", "COLAMD"))}
+                if linear_solver.backend != "petsc_lgmres"
+                else {}
+            ),
             **(
                 {"num_threads": linear_solver.num_threads}
                 if linear_solver.backend == "superlu_mt"
+                else {}
+            ),
+            **(
+                linear_solver.petsc_session.info
+                if linear_solver.backend == "petsc_lgmres"
                 else {}
             ),
         },
@@ -533,10 +591,15 @@ def run_analysis(
             next_event = float(future_events[0]) if len(future_events) else t_end
             attempts = 0
             cutbacks = 0
+            last_failure = None
             while True:
                 attempts += 1
                 if attempts > int(time_data["max_attempts_per_increment"]):
-                    raise ModelError("maximum increment attempts exceeded")
+                    raise ModelError(
+                        f"maximum increment attempts exceeded; last failure: {last_failure}"
+                    ) from last_failure
+                # Release the previous traceback/assembly before the next attempt.
+                last_failure = None
                 event_gap = next_event - t_n
                 dt = min(proposed_dt, event_gap, t_end - t_n)
                 event_landing_below_min = event_gap < dt_min + tol_time and abs(dt - event_gap) <= tol_time
@@ -545,6 +608,7 @@ def run_analysis(
                 t_trial = t_n + dt
                 if abs(t_trial - next_event) <= tol_time:
                     t_trial = next_event
+                history_start = len(result.newton_history)
                 try:
                     trial = _newton_attempt(
                         model,
@@ -559,11 +623,37 @@ def run_analysis(
                         linear_system_observer=observe_linear_system,
                         linear_solver=linear_solver,
                     )
-                except RecoverableError:
+                except RecoverableError as exc:
+                    last_failure = exc
                     cutbacks += 1
                     proposed_dt = min(proposed_dt, dt) * cutback_factor
+                    if len(result.newton_history) == history_start:
+                        result.newton_history.append({"t_n": t_n, "t_np1": t_trial})
+                    result.newton_history[-1].update({
+                        "failure_kind": "recoverable",
+                        "failure_message": str(exc),
+                        "increment_attempt": attempts,
+                    })
+                    # Save rejected attempts before retry/termination, without
+                    # committing their material state or writing field results.
+                    result.timing["elapsed_wall_seconds"] = (
+                        elapsed_before_restart
+                        + (perf_counter_ns() - analysis_wall_start) * 1.0e-9
+                    )
+                    write_run_log(
+                        log_path,
+                        result.increments,
+                        result.newton_history,
+                        result.verification,
+                        result.execution,
+                        result.timing,
+                        result.analysis,
+                    )
                     if event_landing_below_min or proposed_dt < dt_min - tol_time:
-                        raise ModelError("recoverable failure cannot be cut back without violating dt_min")
+                        raise ModelError(
+                            "recoverable failure cannot be cut back without violating dt_min; "
+                            f"last failure: {exc}"
+                        ) from exc
                     continue
                 if abs(t_trial - t_end) <= tol_time:
                     from .verification import verify_analysis

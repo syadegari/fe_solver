@@ -1,0 +1,30 @@
+# PETSc execution settings, independent of the analysis/physics deck.
+# Copy this file and pass --petsc-options PATH to tune a run.
+# Keys are native PETSc option names, without a leading '-' or prefix.
+ksp_type = "lgmres"
+ksp_pc_side = "right"
+ksp_norm_type = "unpreconditioned"
+ksp_rtol = 1.0e-9
+ksp_atol = 0.0
+ksp_max_it = 5000
+ksp_gmres_restart = 33
+ksp_lgmres_augment = 3
+
+pc_type = "fieldsplit"
+pc_fieldsplit_type = "schur"
+pc_fieldsplit_schur_fact_type = "lower"
+pc_fieldsplit_schur_precondition = "selfp"
+
+fieldsplit_u_ksp_type = "preonly"
+fieldsplit_u_pc_type = "asm"
+fieldsplit_u_pc_asm_type = "basic"
+# Conservative baseline. Overlap 0 was fastest on the tested 16-rank matrix,
+# but its convergence was strongly partition-dependent; compare both values.
+fieldsplit_u_pc_asm_overlap = 1
+fieldsplit_u_sub_ksp_type = "preonly"
+fieldsplit_u_sub_pc_type = "ilu"
+fieldsplit_u_sub_pc_factor_levels = 0
+fieldsplit_u_sub_pc_factor_mat_ordering_type = "natural"
+
+fieldsplit_lambda_ksp_type = "preonly"
+fieldsplit_lambda_pc_type = "jacobi"

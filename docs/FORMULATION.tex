@@ -1613,6 +1613,16 @@ Both methods retain the exact linear constraint block, so their accurately solve
 \end{equation}
 A full step therefore removes the constraint residual up to roundoff, even in modified Newton; damping contracts it rather than eliminating it immediately.
 
+For an inexact linear solve, define $\vct e^{(i)}=
+\widehat{\vct J}^{(i)}\Delta\vct x^{(i)}+\vct r^{(i)}$.
+The residual expansion then contains an additional first-order term
+$\alpha\vct e^{(i)}$ in both Newton variants. In particular,
+$\vct r_c(\alpha)=(1-\alpha)\vct r_c^{(i)}+\alpha\vct e_c^{(i)}$,
+so a full step leaves the linear-solve constraint error rather than eliminating it exactly.
+The iterative backend independently checks the true linear residual after the solve;
+its relative two-norm tolerance does not guarantee either block's nonlinear infinity-norm tolerance,
+which remains separately enforced.
+
 For the linear special case $\vct R=\vct K\vct u-\vct f$, Eq.~\eqref{eq:kkt-newton} reduces directly to
 \begin{equation}
 \boxed{
@@ -1942,7 +1952,7 @@ Algorithm~\ref{alg:global-newton} covers one increment \emph{attempt} with backt
         \State \Return recoverable failure
     \EndIf
     \If{full Newton \textbf{or} $i=0$}
-        \State $\widehat{\vct K}\gets\vct K^{(i)}$; factor the KKT matrix
+        \State $\widehat{\vct K}\gets\vct K^{(i)}$; prepare the KKT solver
     \EndIf
     \State Solve Eq.~\eqref{eq:kkt-newton} for $\Delta\vct x^{(i)}$
     \State Evaluate $M_i$ (Eq.~\eqref{eq:kkt-merit}); $\alpha\gets1$; accepted $\gets$ false
@@ -1966,7 +1976,7 @@ Algorithm~\ref{alg:global-newton} covers one increment \emph{attempt} with backt
 \end{algorithm}
 
 \paragraph*{Evaluation and reuse.}
-Full Newton evaluates tangents at all candidates, including rejected ones, and reuses the accepted assembly at the next iteration. Modified Newton evaluates a tangent only at iteration zero and reuses its KKT factorization; its candidates are residual-only. The merit scales stay fixed during each search. Recoverable candidate failures reject that length; search acceptance does not commit history. With backtracking disabled, omit the search and take $\alpha=1$ without a candidate evaluation or cache.
+Full Newton evaluates tangents at all candidates, including rejected ones, and reuses the accepted assembly at the next iteration. Modified Newton evaluates a tangent only at iteration zero and reuses its KKT solver context (direct factorization or iterative preconditioner); its candidates are residual-only. The merit scales stay fixed during each search. Recoverable candidate failures reject that length; search acceptance does not commit history. With backtracking disabled, omit the search and take $\alpha=1$ without a candidate evaluation or cache. An iterative correction must pass its linear residual check before entering the search; failed linear convergence requests increment cutback.
 
 Recoverable attempt failure discards trial data, caches, and factors; the time controller cuts back and retries from the unchanged committed state with a fresh first tangent. Increment/retry limits may stop the analysis; model/setup errors are fatal. After acceptance, the controller advances time, handles output/restart events, and applies the growth rule.
 

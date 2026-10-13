@@ -902,12 +902,46 @@ belongs to one Newton attempt. Exact Newton releases each factor immediately aft
 retains one factor for the attempt. Every remaining factor must be explicitly released on convergence, recoverable
 failure, or exception. Do not separately factor `K` and then eliminate constraints.
 
-### 15.2 Optional iterative backend
+### 15.2 PETSc iterative backend
 
-An iterative KKT backend may be added behind the same interface. Because the generic tangent may be nonsymmetric, do not make MINRES the generic path. GMRES plus an appropriate block/Schur preconditioner, or PETSc/petsc4py field-split machinery, is a later extension.
+`petsc_lgmres` solves the same complete, potentially nonsymmetric KKT system using right-preconditioned LGMRES
+and an unpreconditioned monitored norm. PETSc and MPI remain optional, lazily initialized dependencies;
+`scipy_splu` and `superlu_mt` remain supported and independent of them. Use a real float64 PETSc build.
 
-The active PETSc LGMRES integration plan and proposed nonlinear tolerance profile are tracked in
-[`ITERATIVE_SOLVER_INTEGRATION.md`](ITERATIVE_SOLVER_INTEGRATION.md). They are not yet implemented backend requirements or defaults.
+Read tuning from the separate packaged `fe_solver/petsc_lgmres.toml`, optionally overridden by a flat TOML file
+passed with `--petsc-options FILE` (relative to the invocation directory, not the analysis deck). These files use
+native PETSc option keys without a leading dash or prefix; the implementation supplies the private `fe_` prefix.
+Keep tuning out of the model deck. The recommended configuration is LGMRES restart 33/augmentation 3,
+`rtol=1e-9`, `atol=0`, maximum 5000 linear iterations; Schur LOWER/SELFP; displacement-block ASM BASIC,
+overlap 1, local PREONLY/ILU(0) with natural ordering; multiplier-block PREONLY/Jacobi.
+Overlap 0 is a benchmarked tuning choice, not a rank-independent robustness guarantee.
+
+Launch MPI ranks explicitly with `mpiexec -n N`. Rank zero alone constructs the prepared FE analysis, element
+process pool, and output writers. Other ranks wait in a persistent linear-solve service. Scatter CSR row blocks
+from root during setup, scatter each correction RHS, and gather the correction only after the distributed solve;
+do not gather Krylov residuals or apply a global preconditioner on root. Root retains the assembled sparse matrix,
+while non-root ranks retain only local rows. This is not distributed FE assembly.
+`run_analysis` returns an `AnalysisResult` on root and `None` on service ranks. Direct multi-rank analysis launches
+are rejected to prevent duplicate analyses/output. Python element workers never initialize MPI; retain forkserver/spawn.
+On a single machine, use `--bind-to none` with OpenMPI when rank zero creates an element pool, or explicitly allocate
+a sufficiently broad CPU affinity to rank zero. `--num-processes` controls only that local element pool.
+
+PETSc matrix/KSP/preconditioner contexts follow the existing per-attempt factor lifecycle: refresh for each full-Newton
+correction, retain for modified Newton, release on convergence/failure, and keep the MPI service alive across attempts.
+Include nested block setup in the setup timer. Reset the correction initial guess to zero for every RHS.
+Record effective PETSc options, version, ranks, and one thread per rank in startup/log metadata. Record iterations,
+reason, monitored norm, independently computed true residual, and force/constraint residual infinity norms per solve.
+The existing `kkt_factorization_wall_seconds` field measures complete PETSc setup/transfer rather than direct LU;
+`kkt_solve_wall_seconds` includes RHS transfer, solve, residual validation, and correction gather.
+
+Accept a correction only with a positive KSP convergence reason, finite correction/residual, and explicit
+`||A dx-b||2 <= max(rtol*||b||2, atol)` using effective KSP tolerances. A zero RHS returns a zero correction.
+KSP nonconvergence or failure of this accuracy test is recoverable; do not use an unverified correction or fall back
+silently to another backend. Unexpected exceptions inside MPI collectives abort the MPI job to avoid stranding peers;
+ordinary root-side errors notify the service ranks during shutdown. Nonlinear force, constraint, and correction
+acceptance tests are unchanged. The proposed relaxed profile remains an explicit study choice, not a new default.
+
+See [`ITERATIVE_SOLVER_INTEGRATION.md`](ITERATIVE_SOLVER_INTEGRATION.md) for implementation and validation status.
 
 ---
 
@@ -1127,6 +1161,13 @@ On recoverable failure:
 3. reduce the proposed step by `cutback_factor`;
 4. retry from `t_n`.
 
+Before retry or termination, save the attempted Newton history and elapsed wall time to the standalone JSON run log.
+Mark the failed attempt's last record with `failure_kind`, the underlying `failure_message`, and `increment_attempt`.
+Retain any linear-solve diagnostics, including PETSc iterations, convergence reason, and independently computed
+residuals. Failed attempts must not add field results to the HDF5 database or commit constitutive state. Terminal
+`dt_min` and maximum-attempt errors must include and chain the last recoverable failure, rather than hiding it behind
+the controller's termination message.
+
 Do not use cutback to hide a structurally singular KKT system caused by dependent constraints or an unremoved rigid mode.
 
 ---
@@ -1181,9 +1222,12 @@ Minimum top-level responsibilities:
 [verification]
 ```
 
-`linear_solver.backend` is either `scipy_splu` or `superlu_mt`. The command-line `--solver-backend` option may override
+`linear_solver.backend` is `scipy_splu`, `superlu_mt`, or `petsc_lgmres`. The command-line `--solver-backend` option may override
 the deck for one run. A SuperLU_MT run additionally requires `--num-threads N`; thread count is an execution choice and
 is not stored in the model deck.
+
+PETSc tuning is read from its separate options file, not this table; see Section 15.2.
+The deck's `ordering` applies to the direct backends; PETSc's local ILU ordering comes from its options file.
 
 
 A scalar value expression may contain a constant term, a curve term, or both. When both are present, evaluate
