@@ -1,4 +1,4 @@
-# Finite strain finite element prototype
+# A Material-Agnostic Finite Element Solver for Finite-Strain Solid Mechanics
 
 This repository implements the v1 contract in `docs/IMPLEMENTATION_SPEC.md`:
 
@@ -356,3 +356,20 @@ This checks both XDMF3 reader variants at every saved time, all field components
 - `fe_solver/preprocess.py`, `assembly.py`, `execution.py`, `solver.py`: validated setup, deterministic serial/process element execution, sparse assembly, and nonlinear solution
 - `fe_solver/io.py`, `config.py`: HDF5 result/restart I/O and TOML/event handling
 - `fe_solver/postprocess.py`: temporal XDMF construction from a completed HDF5 run
+
+## Citation
+
+If you use this software in your work, please cite:
+
+Sourena Yadegari (2026). *A Material-Agnostic Finite Element Solver for Finite-Strain Solid Mechanics* [Computer software]. [GitHub repository](https://github.com/syadegari/fe_solver).
+
+```bibtex
+@software{yadegari2026finite_strain_fe,
+  author = {Yadegari, Sourena},
+  title = {A Material-Agnostic Finite Element Solver for Finite-Strain Solid Mechanics},
+  year = {2026},
+  url = {https://github.com/syadegari/fe_solver}
+}
+```
+
+For reproducibility, also report the release tag or commit hash used.
