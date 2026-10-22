@@ -38,11 +38,19 @@ The production element tangents use the specification's current-configuration Tr
 * [x] Integrate SuperLU_MT as a lazy-loaded selectable backend in the production global solver.
 * [ ] Add persistent numerical refactorization (`refact=YES`) so symbolic/sparsity information can be reused when the KKT structure is unchanged.
 * [ ] Preserve factor reuse for modified Newton and refactor only when the tangent changes.
+* [ ] Compare the results of current iterative solver (convergence behavior and dt) with results from SuperLU_MT solver on a small domain in order to eliminate or confirm hypotheses regarding convergence difficulties.
+* [ ] Update the c-bridge for SuperLU_MT to the current HEAD of the repo.
+* [ ] Bring in the diagnostics from SuperLU_MT into the solver/native. Add TOML file that controls new parameters added to the solver (ienv7 ... ienv9)
+* [ ] Rewrite the documentation for better readability. Most sections require shortening and re-derivation. 
+* [ ] Finish PETSC integration.
 
 ### Follow-up development
 
 * [ ] Review and document the exact Newton/modified-Newton conventions used by the implementation and keep formulation, specification, and code terminology synchronized.
 * [ ] Revisit the symmetry/nonsymmetry assumptions for the consistent tangent and assembled stiffness.
+* [ ] Add iterative solvers for constrained environments using pthread.
+* [ ] Add patch test for current, existing elements (Hex8, Hex20 and Hex8 with F-bar).
+* [ ] Cohesive zone elements preliminary study. 
 
 ## Run
 
