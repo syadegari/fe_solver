@@ -28,6 +28,7 @@ The production element tangents use the specification's current-configuration Tr
 * [x] Add timing information around time consuming parts of the solver for debugging and observability.
 * [x] Add selectable SciPy/SuperLU_MT sparse-direct solvers for the global KKT system.
 * [x] Integrate the external multiphase TRIP steel model through its Python bridge and solve periodic multi-grain RVEs.
+* [ ] Rewrite the documentation for better readability. Most sections require shortening and re-derivation. 
 
 ### Parallel global linear solver
 
@@ -41,7 +42,6 @@ The production element tangents use the specification's current-configuration Tr
 * [ ] Compare the results of current iterative solver (convergence behavior and dt) with results from SuperLU_MT solver on a small domain in order to eliminate or confirm hypotheses regarding convergence difficulties.
 * [ ] Update the c-bridge for SuperLU_MT to the current HEAD of the repo.
 * [ ] Bring in the diagnostics from SuperLU_MT into the solver/native. Add TOML file that controls new parameters added to the solver (ienv7 ... ienv9)
-* [ ] Rewrite the documentation for better readability. Most sections require shortening and re-derivation. 
 * [ ] Finish PETSC integration.
 
 ### Follow-up development
