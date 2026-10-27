@@ -43,14 +43,16 @@ The production element tangents use the specification's current-configuration Tr
 * [ ] Update the c-bridge for SuperLU_MT to the current HEAD of the repo.
 * [ ] Bring in the diagnostics from SuperLU_MT into the solver/native. Add TOML file that controls new parameters added to the solver (ienv7 ... ienv9)
 * [ ] Finish PETSC integration.
+* [ ] If PETSC results are promising, isolate the solution and implement it in a thread-only (pthread) version without relying on mpi/mpiexec. 
 
 ### Follow-up development
 
 * [ ] Review and document the exact Newton/modified-Newton conventions used by the implementation and keep formulation, specification, and code terminology synchronized.
 * [ ] Revisit the symmetry/nonsymmetry assumptions for the consistent tangent and assembled stiffness.
-* [ ] Add iterative solvers for constrained environments using pthread.
 * [ ] Add patch test for current, existing elements (Hex8, Hex20 and Hex8 with F-bar).
-* [ ] Cohesive zone elements preliminary study. 
+* [ ] Cohesive zone elements preliminary study.
+* [ ] Contact elements preliminary study.
+* [ ] 
 
 ## Run
 
