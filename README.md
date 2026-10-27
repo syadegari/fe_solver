@@ -52,7 +52,7 @@ The production element tangents use the specification's current-configuration Tr
 * [ ] Add patch test for current, existing elements (Hex8, Hex20 and Hex8 with F-bar).
 * [ ] Cohesive zone elements preliminary study.
 * [ ] Contact elements preliminary study.
-* [ ] 
+      
 
 ## Run
 
