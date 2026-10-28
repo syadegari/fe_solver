@@ -16,7 +16,7 @@ git -c user.name="Codex Implementation Agent" \
 
 Commit identity reflects who performs the commit. Discussion depth is not encoded in authorship or trailers. Record important design rationale in the commit body or an appropriate documentation change. Do not add `Co-authored-by` or `Assisted-by` trailers by default.
 
-The nine commits predating this policy are intentionally left unchanged while the repository remains unpublished and has no remote. Any future history rewrite requires explicit approval and must happen before publication if possible.
+The nine commits predating this policy were intentionally retained. Any history rewrite requires explicit approval.
 
 ## Local-only configuration and secret hygiene
 
@@ -45,7 +45,7 @@ Within one solver run, `--num-processes` controls a persistent pool of complete-
 The solver reports both physical and logical CPU availability but never expands the pool automatically. For these
 CPU-bound kernels, start at or below the available physical-core count; treat simultaneous multithreading as an
 empirical tuning option rather than another full core. Element workers internally limit BLAS thread pools to one.
-This setting does not control or parallelize the global sparse KKT factorization in v1.
+This setting controls neither global-solver thread counts nor PETSc MPI rank counts.
 
 Model switching remains a manual user action. Codex may recommend a less expensive model for routine inspection or a more capable model for difficult diagnosis, but no wrapper around the Codex application will be introduced at this stage.
 
