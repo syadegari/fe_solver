@@ -1,48 +1,78 @@
-# Finite strain finite element prototype
+# A Material-Agnostic Finite Element Solver for Finite-Strain Solid Mechanics
 
-This repository implements the v1 contract in `docs/IMPLEMENTATION_SPEC.md`:
+This project is a finite-element solver for finite-strain solid mechanics, built around an extensible material-point interface. It combines constitutive integration, nonlinear equilibrium, and periodic RVE simulations, with separate preprocessing, solution, and postprocessing stages.
 
-- full-integration Hex8 and Hex20 serendipity elements;
+Current capabilities include:
+
+- full-integration Hex8 and serendipity Hex20 elements;
 - centroidal F-bar Hex8 with its complete projection tangent;
 - compressible neo-Hookean material through the endpoint `F_n`/`F_np1` material-point API;
 - a stateful multiplicative finite-strain J2/Voce plug-in with an analytic algorithmic tangent;
+- integration of an external multiphase TRIP steel model, with [archived periodic RVE results](verification/multiphase_trip_results/README.md);
 - sparse COO/CSR assembly and a whole-system sparse-LU KKT solve for affine constraints;
 - exact and modified Newton, optional residual-based backtracking, recoverable trial rollback, adaptive cutback, and mandatory events;
 - Gmsh Physical Groups and translational periodic node maps;
 - append-only accepted-state HDF5 output, HDF5 restart, and separate temporal XDMF postprocessing.
 
-The production element tangents use the specification's current-configuration Truesdell push-forward, geometric stiffness, and F-bar projection correction. An independent total-reference F-bar kernel and centered directional finite differences cross-check that decomposition.
+The [formulation](docs/FORMULATION.tex) develops the equations; the [implementation specification](docs/IMPLEMENTATION_SPEC.md) defines the numerical algorithms and interfaces.
 
 
-## Project status and TODO
+## Development status
 
-### FE solver 
+SciPy/SuperLU and SuperLU_MT are available on `main`; their numerical comparison is recorded in the [backend verification report](verification/superlu_mt_results/README.md). Modified Newton already reuses the factorization within each increment.
 
-* [x] Implement full-integration Hex8 and Hex20  and Hex-8 F-bar elements.
-* [x] Add neo-Hookean and finite-strain J2 plasticity with consistent algorithmic tangent.
-* [x] Implement cutback and adaptive time stepping.
-* [x] Add support for periodic boundary conditions (via Gmsh-based periodic boundary conditions).
-* [x] Implement HDF5 results/restart and temporal XDMF postprocessing for ParaView.
-* [x] Implement process-based parallel element evaluation.
-* [x] Validate J2 plasticity model against benchmarks from literature.
-* [x] Add timing information around time consuming parts of the solver for debugging and observability.
-* [x] Add selectable SciPy/SuperLU_MT sparse-direct solvers for the global KKT system.
-* [x] Integrate the external multiphase TRIP steel model through its Python bridge and solve periodic multi-grain RVEs.
+PETSc LGMRES is under development on [`feature/iterative-solvers`](https://github.com/syadegari/fe_solver/tree/feature/iterative-solvers). The selectable backend, persistent MPI service, solver-context reuse, and true-residual checks are implemented. Frozen-system diagnostics identified restart-sensitive stagnation and demonstrated remedies on small KKT snapshots. Successful end-to-end FE comparisons and larger-system validation remain open in the recorded study. See the [integration tracker](https://github.com/syadegari/fe_solver/blob/feature/iterative-solvers/docs/ITERATIVE_SOLVER_INTEGRATION.md) and [diagnostic results](https://github.com/syadegari/fe_solver/blob/feature/iterative-solvers/native/PETSC_KKT_DIAGNOSTIC_RESULTS.md).
 
-### Parallel global linear solver
+<details>
+<summary>Completed milestones</summary>
 
-* [x] Capture FE KKT systems for isolated linear-solver testing.
-* [x] Evaluate SuperLU_MT against the existing SciPy/SuperLU reference solver.
-* [x] Develop a persistent native C and Python bridges for SuperLU_MT factorization and solve.
+**FE solver**
+
+* [x] Implement full-integration Hex8, Hex20, and centroidal Hex8-Fbar elements.
+* [x] Add neo-Hookean and finite-strain J2 materials with consistent tangents.
+* [x] Implement adaptive time stepping and cutbacks.
+* [x] Support periodic boundary conditions through Gmsh node maps.
+* [x] Add HDF5 results/restart and temporal XDMF output for ParaView.
+* [x] Parallelize element evaluation with persistent worker processes.
+* [x] Verify J2 necking against published numerical results.
+* [x] Record solver and assembly timings.
+* [x] Add selectable SciPy/SuperLU and SuperLU_MT backends.
+* [x] Integrate the external multiphase TRIP model and solve periodic multi-grain RVEs.
+
+**Global linear solvers**
+
+* [x] Capture KKT systems for standalone solver tests.
+* [x] Compare SuperLU_MT results with SciPy/SuperLU.
+* [x] Develop C and Python bridges with persistent SuperLU_MT factors.
 * [x] Benchmark SuperLU_MT thread scaling on representative FE systems.
-* [x] Integrate SuperLU_MT as a lazy-loaded selectable backend in the production global solver.
-* [ ] Add persistent numerical refactorization (`refact=YES`) so symbolic/sparsity information can be reused when the KKT structure is unchanged.
-* [ ] Preserve factor reuse for modified Newton and refactor only when the tangent changes.
+* [x] Integrate SuperLU_MT as a selectable backend with lazy loading.
+* [x] Reuse factorizations within modified-Newton increments.
 
-### Follow-up development
+</details>
 
-* [ ] Review and document the exact Newton/modified-Newton conventions used by the implementation and keep formulation, specification, and code terminology synchronized.
-* [ ] Revisit the symmetry/nonsymmetry assumptions for the consistent tangent and assembled stiffness.
+### Documentation
+
+* [ ] Shorten the README and technical documentation; clarify derivations.
+
+### Global linear solvers
+
+* [ ] Verify PETSc MPI integration and compare small FE runs with SuperLU_MT.
+* [ ] Validate PETSc tuning on larger frozen KKT systems.
+* [ ] Reuse SuperLU_MT symbolic analysis when KKT sparsity is unchanged (`refact=YES`).
+* [ ] Update the SuperLU_MT bridge to a selected upstream revision.
+* [ ] Expose SuperLU_MT diagnostics and `ienv(7:9)` tuning through a separate TOML file.
+* [ ] After PETSc validation, assess a shared-memory solver path without `mpiexec`.
+
+### Nonlinear solver and elements
+
+* [ ] [Separate logging, histories, and timing from the nonlinear algorithms](docs/SOLVER_CONTROL_FLOW_REFACTOR.md#observability).
+* [ ] [Encapsulate adaptive stepping and event landing in a stateful controller](docs/SOLVER_CONTROL_FLOW_REFACTOR.md#time-step-control).
+* [ ] [Extract line-search mechanics while keeping numerical decisions explicit](docs/SOLVER_CONTROL_FLOW_REFACTOR.md#line-search).
+* [ ] Review Newton/modified-Newton convergence, especially near yielding.
+* [ ] Review tangent and global-stiffness symmetry assumptions.
+* [ ] Add patch tests for Hex8, Hex20, and Hex8-Fbar.
+* [ ] Study cohesive-zone elements.
+* [ ] Study contact elements.
 
 ## Run
 
@@ -400,3 +430,20 @@ This checks both XDMF3 reader variants at every saved time, all field components
 - `fe_solver/preprocess.py`, `assembly.py`, `execution.py`, `solver.py`: validated setup, deterministic serial/process element execution, sparse assembly, and nonlinear solution
 - `fe_solver/io.py`, `config.py`: HDF5 result/restart I/O and TOML/event handling
 - `fe_solver/postprocess.py`: temporal XDMF construction from a completed HDF5 run
+
+## Citation
+
+If you use this software in your work, please cite:
+
+Sourena Yadegari (2026). *A Material-Agnostic Finite Element Solver for Finite-Strain Solid Mechanics* [Computer software]. [GitHub repository](https://github.com/syadegari/fe_solver).
+
+```bibtex
+@software{yadegari2026finite_strain_fe,
+  author = {Yadegari, Sourena},
+  title = {A Material-Agnostic Finite Element Solver for Finite-Strain Solid Mechanics},
+  year = {2026},
+  url = {https://github.com/syadegari/fe_solver}
+}
+```
+
+For reproducibility, also report the release tag or commit hash used.
