@@ -364,15 +364,16 @@ overrides, provenance limitations, and reproduction commands.
 
 ## Verify
 
-The test suite uses the standard library runner, so no separate test dependency is required:
+The test suite uses the standard library runner. Report-generation tests additionally require Matplotlib:
 
 ```bash
+python -m pip install matplotlib
 python -m unittest discover -s tests -v
 ```
 
 It checks shape functions, material and element tangents, homogeneous F-bar equivalence, Gmsh periodic maps, spanning-tree constraints, nonsymmetric whole-KKT solves, event merging, restart compatibility, forced-failure cutback/rollback, and serial-versus-process assembly equivalence.
 
-Run the complete regression and featured-example acceptance suite with:
+Run the eight default neo-Hookean acceptance cases, including the frame-objectivity and periodic-cube examples, with:
 
 ```bash
 python -m verification.run_acceptance
@@ -383,6 +384,11 @@ The substantially larger necking benchmark is selectable explicitly and is not p
 ```bash
 python -m verification.run_acceptance --deck j2_necking_bar_hex8_fbar.toml
 ```
+
+The TRIP examples are not part of this acceptance command and require the external
+constitutive library to rerun. After a native build, CTest runs the upstream
+SuperLU_MT tests; the Python suite's bridge-versus-SciPy comparison runs only when
+`build/native/libsuperlu_mt_bridge.so` exists.
 
 When ParaView is installed, also test its real readers and Warp By Vector against the HDF5 database:
 

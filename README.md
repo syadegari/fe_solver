@@ -126,12 +126,15 @@ The [formulation](docs/FORMULATION.tex) develops the equations and global algori
 
 ## Verification and limitations
 
+Install Matplotlib for the report-generation tests, then run:
+
 ```bash
+python -m pip install matplotlib
 python -m unittest discover -s tests -v
 python -m verification.run_acceptance
 ```
 
-The suite checks material and element derivatives, independent F-bar tangent formulations, affine constraints and periodic maps, state rollback, restart, and serial/process agreement. The acceptance command also runs the featured examples. Native-bridge tests use CTest after compilation; see the [running guide](docs/RUNNING.md).
+The suite checks material and element derivatives, independent F-bar tangent formulations, affine constraints and periodic maps, state rollback, restart, and serial/process agreement. The default acceptance command runs eight neo-Hookean cases, including rotation and periodic cubes. J2 necking is selectable explicitly; repeating the TRIP examples requires the private material library. CTest runs the upstream SuperLU_MT tests; the Python suite checks the bridge against SciPy when it has been built. See the [running guide](docs/RUNNING.md).
 
 | Evidence | Record |
 | --- | --- |
