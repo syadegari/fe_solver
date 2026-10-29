@@ -19,6 +19,20 @@ dependencies = [
 [project.scripts]
 fe-solver = "fe_solver.cli:main"
 
+[project.optional-dependencies]
+test = ["matplotlib>=3.8", "coverage>=7.13,<8"]
+
+[tool.coverage.run]
+source = ["fe_solver"]
+branch = true
+parallel = true
+concurrency = ["multiprocessing"]
+patch = ["subprocess"]
+sigterm = true
+
+[tool.coverage.report]
+show_missing = true
+
 [tool.setuptools.packages.find]
 include = ["fe_solver*"]
 

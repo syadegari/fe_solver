@@ -2,6 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tested Python: 3.14](https://img.shields.io/badge/tested%20Python-3.14-blue)](docs/ACCEPTANCE_RESULTS.md)
+[![Python tests](https://github.com/syadegari/fe_solver/actions/workflows/python-tests.yml/badge.svg?branch=main)](https://github.com/syadegari/fe_solver/actions/workflows/python-tests.yml)
+[![Native build and tests](https://github.com/syadegari/fe_solver/actions/workflows/native-build.yml/badge.svg?branch=main)](https://github.com/syadegari/fe_solver/actions/workflows/native-build.yml)
 
 A three-dimensional finite-element solver built around an extensible material-point interface. It combines finite-strain element formulations, nonlinear equilibrium with general affine constraints, and periodic RVE simulations. Preprocessing, constitutive integration, global solution, and results visualization have distinct responsibilities.
 
@@ -126,10 +128,10 @@ The [formulation](docs/FORMULATION.tex) develops the equations and global algori
 
 ## Verification and limitations
 
-Install Matplotlib for the report-generation tests, then run:
+Install the test dependencies, then run:
 
 ```bash
-python -m pip install matplotlib
+python -m pip install -e '.[test]'
 python -m unittest discover -s tests -v
 python -m verification.run_acceptance
 ```
@@ -145,7 +147,7 @@ The suite checks material and element derivatives, independent F-bar tangent for
 
 This is a research solver with the element and loading scope listed above. Localized plastic-strain peaks and localization width can depend on mesh resolution. The TRIP source/library is private: archived outputs and plots are available, with large binary datasets stored through Git LFS, but repeating those solves requires the external model. Verification of that integration does not independently validate the constitutive physics.
 
-The badges identify the license and recorded Python environment; they do not claim measured code coverage. Retrieve archived binary results with `git lfs pull`.
+GitHub Actions runs the Python tests with line/branch coverage and separately builds/tests the native bridge. Coverage summaries and downloadable HTML/XML reports appear in each Python workflow run; see [coverage scope and local commands](docs/RUNNING.md#automated-checks-and-coverage). The workflow badges show status on `main`, not coverage percentages. Retrieve archived binary results with `git lfs pull`.
 
 ## Development status
 
