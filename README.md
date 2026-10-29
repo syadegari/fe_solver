@@ -147,7 +147,7 @@ The suite checks material and element derivatives, independent F-bar tangent for
 
 This is a research solver with the element and loading scope listed above. Localized plastic-strain peaks and localization width can depend on mesh resolution. The TRIP source/library is private: archived outputs and plots are available, with large binary datasets stored through Git LFS, but repeating those solves requires the external model. Verification of that integration does not independently validate the constitutive physics.
 
-GitHub Actions runs the Python tests with line/branch coverage and separately builds/tests the native bridge. Coverage summaries and downloadable HTML/XML reports appear in each Python workflow run; see [coverage scope and local commands](docs/RUNNING.md#automated-checks-and-coverage). The workflow badges show status on `main`, not coverage percentages. Retrieve archived binary results with `git lfs pull`.
+Retrieve archived binary results with `git lfs pull`.
 
 ## Development status
 
