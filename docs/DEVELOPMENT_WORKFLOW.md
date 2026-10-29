@@ -74,4 +74,10 @@ interpreter details remain local-only inputs to the transfer/launch command.
 
 The personal remote worker may run trusted branches and manually launched jobs. It must not execute arbitrary code from public pull requests. Public CI should use hosted runners or disposable, isolated workers with narrowly scoped credentials.
 
+The Python-test/coverage and native-build GitHub Actions workflows use hosted
+Ubuntu runners with read-only repository permissions and no persisted checkout
+credentials. They do not use the personal worker, private material library, or
+large LFS simulation archives. Coverage is reported without an initial percentage
+gate; workflow definitions and reproduction commands are linked from `RUNNING.md`.
+
 Deeper Codex automation through an SDK or App Server is deferred. Reconsider it only if recurring unattended jobs require callbacks, retries, scheduling, automatic model routing, or coordination across multiple repositories or workers.

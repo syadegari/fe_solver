@@ -9,3 +9,8 @@ notes.org
 .#notes.org
 notes.org~
 build/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/

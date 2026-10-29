@@ -364,10 +364,11 @@ overrides, provenance limitations, and reproduction commands.
 
 ## Verify
 
-The test suite uses the standard library runner. Report-generation tests additionally require Matplotlib:
+The test suite uses the standard library runner. The test extra installs Matplotlib
+for report-generation tests and coverage.py for coverage measurement:
 
 ```bash
-python -m pip install matplotlib
+python -m pip install -e '.[test]'
 python -m unittest discover -s tests -v
 ```
 
@@ -397,3 +398,45 @@ python -m verification.check_paraview examples/results/frame_objectivity_hex8/ru
 ```
 
 This checks both XDMF3 reader variants at every saved time, all field components, and warped node positions.
+
+## Automated checks and coverage
+
+Two GitHub Actions workflows run on pushes, pull requests, and manual dispatches,
+using GitHub-hosted Ubuntu 24.04 runners and Python 3.14:
+
+- [Python tests](../.github/workflows/python-tests.yml) runs the unit suite with
+  line and branch coverage. The job summary contains the coverage table; the
+  `python-coverage` artifact contains an HTML report (`index.html`) and XML data,
+  retained for 14 days. No minimum coverage percentage is enforced initially.
+- [Native build and tests](../.github/workflows/native-build.yml) builds the
+  SuperLU_MT bridge with bundled BLAS, runs the upstream CTest suite, and executes
+  the Python linear-backend tests. An explicit library-file check prevents a
+  missing bridge from turning the native comparison into a passing skip.
+
+These checks do not download the LFS simulation archives, run large benchmarks,
+or require the private TRIP library. TRIP interface tests use a small C stub.
+The Python-only job intentionally skips the built-bridge comparison; the native
+job exercises it. PETSc/MPI validation remains separate on its development branch.
+
+To reproduce Python coverage locally after installing `.[test]`:
+
+```bash
+python -m coverage erase
+NUMBA_JIT_COVERAGE=0 python -m coverage run -m unittest discover -s tests -v
+python -m coverage combine
+python -m coverage report
+python -m coverage html
+```
+
+Open `htmlcov/index.html` to inspect uncovered statements and branch destinations.
+Configuration in `pyproject.toml` collects separate data for multiprocessing
+workers and Python subprocesses; `combine` merges those files before reporting.
+Generated coverage data and reports are ignored by Git.
+
+The report measures Python execution in `fe_solver`, including the uncompiled
+J2 reference exercised by the numerical tests. Numba compiler coverage is disabled
+for this measurement: compiled source-line notifications would not establish
+runtime branch coverage in the JIT kernel. The compiled J2 kernel is still tested
+against its Python reference. C, external Fortran, and third-party library execution
+are not included in this percentage. Coverage identifies test gaps; tangent checks
+and numerical benchmarks establish properties of the computed results.
