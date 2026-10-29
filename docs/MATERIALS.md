@@ -162,9 +162,12 @@ select = "equivalent_plastic_strain"
 name = "plastic_strain"
 ```
 
-Vector fields support zero-based component and slice selections such as
-`internal_variables[57]` or `internal_variables[33:58]`. Non-singleton slices need
-an output name. Restart checkpoints retain the complete integration state,
+One-dimensional fields with declared component labels support individual labels,
+comma-separated selections, and inclusive ranges: for example,
+`internal_variables[57]`, `internal_variables[33,57]`, or
+`internal_variables[33..57]`. The TRIP model labels its components with zero-based
+indices. Multi-component selections require an output name; Python-style colon
+slices are not supported. Restart checkpoints retain the complete integration state,
 regardless of which fields are selected for visualization.
 
 ## Checking a new implementation
