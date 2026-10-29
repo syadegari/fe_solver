@@ -91,7 +91,7 @@ flowchart TB
     input --> prep
     subgraph solver["FE solver"]
         global["Newton / modified Newton<br/>convergence and line search"]
-        element["Element evaluation<br/>kinematics and F-bar"]
+        element["Element evaluation"]
         material["Common material interface<br/>constitutive update"]
         kkt["Ordered sparse assembly + KKT solve<br/>selected linear backend"]
         global -->|trial displacement| element
