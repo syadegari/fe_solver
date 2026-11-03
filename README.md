@@ -67,8 +67,7 @@ For a multithreaded direct solve, build the supplied bridge from the repository 
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -Denable_internal_blaslib=ON \
-  -DTHREAD_API=PTHREAD \
-  -DPLAT=_PTHREAD
+  -DTHREAD_API=PTHREAD
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```

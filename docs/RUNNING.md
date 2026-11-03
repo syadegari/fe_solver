@@ -83,8 +83,7 @@ run, use an explicit build parallelism and solver thread count:
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -Denable_internal_blaslib=ON \
-  -DTHREAD_API=PTHREAD \
-  -DPLAT=_PTHREAD
+  -DTHREAD_API=PTHREAD
 
 cmake --build build -j
 ctest --test-dir build --output-on-failure
