@@ -97,7 +97,7 @@ set_target_properties(
 
 # ---------------------------------------------------------------------------
 # Optional standalone reproducer for the sporadic wrong solutions that
-# multithreaded SuperLU_MT returns on small systems; see
+# multithreaded SuperLU_MT occasionally returns; see
 # native/superlu_mt_race/README.md.  Not built by default and not a test,
 # because the failure is probabilistic.
 # ---------------------------------------------------------------------------

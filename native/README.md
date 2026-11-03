@@ -36,6 +36,6 @@ The Python test suite compares the built bridge against SciPy; this check is
 skipped if the shared library has not been built.
 
 `superlu_mt_race/` holds a self-contained reproducer for the sporadic wrong
-solutions that multithreaded SuperLU_MT returns on small systems, prepared for
+solutions that multithreaded SuperLU_MT occasionally returns, prepared for
 the upstream maintainers; build it with
 `cmake --build build --target superlu_mt_race_repro`.

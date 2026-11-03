@@ -87,9 +87,13 @@ threshold (1.0), panel size, relaxation, and storage estimates:
   rate unchanged (6 of 5,000 at 16 threads).  No user work array is passed
   (`lwork = 0`), so the `v4.1.0` fix for user-supplied workspace does not
   apply.
-- 30 repetitions on a `17,193`-unknown matrix of the same structure at eight
-  threads showed no wrong solve, so larger systems are affected less often, if
-  at all.  The rate on production sizes is unknown.
+- The rate does not fall with system size.  A `17,193`-unknown matrix of
+  the same structure (`nnz(A)` 1,068,651; `nnz(L) + nnz(U)` 73 million, no
+  expansions) gave 1 wrong solve in 600 repetitions at 16 threads, relative
+  residual `0.12`, with `nnz(U)` again differing between runs (42,851,615
+  versus 42,851,622).  That is the same order as the `2e-3` per
+  factorization measured on the small matrix.  The small matrix is supplied
+  because it reproduces in seconds rather than hours.
 
 ## ThreadSanitizer
 

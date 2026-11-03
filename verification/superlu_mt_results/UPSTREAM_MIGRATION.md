@@ -1,6 +1,6 @@
 # SuperLU_MT fork-to-upstream migration check
 
-Status: comparison completed on 2026-11-02, reproducer and decision record added on 2026-11-03.  Read together with the
+Status: comparison completed on 2026-11-02; reproducer, decision record, execution-path trace, and size dependence added on 2026-11-03.  Read together with the
 [production-solver comparison](README.md), which compared the SciPy and
 SuperLU_MT backends against each other.  This record compares two builds of
 the SuperLU_MT backend against each other.
@@ -107,10 +107,11 @@ bridges with the original right-hand sides.  A solve is counted as wrong when
 | 16 | 3,380 | 7 | 4 | `8.7e-1` |
 
 The rate grows with the thread count and is the same for both builds within
-the sample sizes.  Thirty repeated eight-thread factorizations of the archived
-`17,193`-unknown snapshot showed no failure on either build, so the rate on
-production-size systems is unknown but at least much lower.  `pdgstrf` reports
-`info = 0` for the wrong solves.
+the sample sizes.  `pdgstrf` reports `info = 0` for the wrong solves.  Thirty
+repeated eight-thread factorizations of the archived `17,193`-unknown
+snapshot showed no failure on either build, which at the time suggested a
+lower rate on larger systems; the longer measurement in the size-dependence
+section below shows that the rate is in fact the same.
 
 ### Standalone reproducer
 
@@ -127,9 +128,12 @@ library build, on one archived `561 x 561` matrix with `b = A x_exact`:
 | 8 | 2 | |
 | 16 | 10, 15, 6 | 8 |
 
-Memory expansion is not involved (the library reports zero expansions), the
-`v4.1.0` storage-estimate options do not change the rate, and the fix in PR
-#36 is not reached because no user work array is passed.  A ThreadSanitizer
+The same program on the archived `17,193`-unknown snapshot (`nnz(A)` of
+1.07 million, factors of 73 million entries) gave 1 wrong solve in 600 at 16
+threads, with a relative residual of `0.12`.  Memory expansion is not
+involved (the library reports zero expansions), the `v4.1.0`
+storage-estimate options do not change the rate, and the fix in PR #36 is
+not reached because no user work array is passed.  A ThreadSanitizer
 build reports more than 200 distinct races inside the factorization, the most
 frequent between the pivot-row interchange in `pdgstrf_pivotL.c` and the dense
 update kernels of other threads; SuperLU_MT relies partly on flag-based
@@ -171,15 +175,138 @@ contains the check that makes a wrong linear solve harmless:
   convergence tolerances of the deck.
 - With one or two threads the backend is deterministic and bit-identical with
   the fork, so a reproducible configuration remains available when needed.
-- The failure was never observed on the `17,193`-unknown system, and the
-  backend exists for large systems; on the small systems where it occurs the
-  serial SciPy backend is the natural choice anyway.
+- The failure occurs at the same rate on the `17,193`-unknown production
+  snapshot as on the small test matrix (see below), so it is a property of
+  every multithreaded run, not of small systems.  The mechanisms above do
+  not depend on system size.
+
+### What a wrong linear solve does inside the FE solver
+
+The solver treats the linear solve as a proposal and never as a result.  The
+path of a wrong correction through `fe_solver/solver.py` (`_newton_attempt`
+and the increment loop in `run_analysis`) is the following; line references
+are to the code at the commit of this record.
+
+1. **Factorization.**  `factor_kkt` raises a fatal `ModelError` if `pdgstrf`
+   reports `info != 0`.  The race does not take this path: every wrong solve
+   observed came with `info = 0`, so detection has to happen downstream.
+2. **Correction.**  The only direct check on the solver output is
+   `np.isfinite`; a non-finite correction raises `ModelError`, which aborts
+   the analysis rather than cutting back.  All observed wrong corrections
+   were finite, with residuals up to `34` relative, so this check did not
+   fire.  It is a gap only in the sense that a NaN produced by the race
+   would stop the run visibly instead of being retried; it cannot corrupt a
+   result.
+3. **Line search (`line_search = "backtracking"`, used by every shipped J2
+   deck).**  The correction is a search direction.  A candidate `u + alpha
+   du`, `lambda + alpha dlambda` is assembled from the committed state at
+   `t_n`, its true residuals `f_int(u) - f_ext + C^T lambda` and `C u - d`
+   are evaluated, and the candidate is accepted only if the larger of the two
+   residuals, each measured in units of its convergence tolerance, falls
+   below `(1 - 1e-4 alpha)` times the current value.  A wrong direction
+   raises the residual by orders of magnitude, so `alpha = 1, 1/2, ...,
+   2^-13` are rejected in turn and the iteration raises `RecoverableError`.
+   This is what the two cutback runs show (14 backtracks).  A wrong
+   direction can also be accepted at a small `alpha` when it happens to
+   reduce the residual slightly, as one run shows (`alpha = 1/32`, merit
+   reduced by 4 percent); the iterate then moves a little, the next
+   iteration refactors at the new point, and the increment converges one
+   iteration later than otherwise.
+4. **No line search (`line_search = "none"`, neo-Hookean decks).**  The full
+   correction is applied without a test.  The next iteration assembles at
+   the new displacement and evaluates the true residuals; the increment can
+   converge only when both are below tolerance, so a wrong step costs
+   iterations but cannot be accepted.  If the step lands on an inadmissible
+   configuration the element routines raise `RecoverableError`; if Newton
+   does not recover within `max_iterations`, the same error is raised.
+   Either leads to a cutback.
+5. **Modified Newton.**  The factorization is computed once per increment
+   and reused for every iteration.  A corrupted factor therefore produces a
+   wrong direction at every iteration of that attempt; the line search
+   rejects them until `max_iterations` or a failed search raises
+   `RecoverableError`.  The increment is then retried with a new
+   factorization.  The outcome is the same as for full Newton, at a higher
+   cost in wasted assemblies.  (The 8-thread runs here used full Newton.)
+6. **Cutback.**  `run_analysis` catches `RecoverableError`, halves the
+   proposed step, and calls `_newton_attempt` again from the committed
+   `u_n`, `lambda_n`, and material state.  Trial material state is committed
+   by `commit_trial_states` only after `_newton_attempt` has returned a
+   converged result, so nothing from a failed attempt survives.  The
+   attempt counter and `dt_min` bound the number of retries; exceeding them
+   is a fatal error, not a silent acceptance.
+7. **Convergence and output.**  Acceptance requires the force residual, the
+   constraint residual, and optionally the displacement increment to be
+   below their tolerances, all computed from the trial state and never from
+   the linear-solver output.  Results, reactions, restart files, and the
+   end-of-analysis tangent verification are written from accepted states
+   only.
+
+Consequence: a wrong solve cannot enter the results.  It can only change
+the path to the converged state, through a wasted iteration or through a
+cutback that changes the pseudo-time step sequence.  The latter is a real
+effect for history-dependent materials, since rate-independent plasticity
+integrated with different increments gives slightly different committed
+states; the two cutback runs differ from the reference by `1e-5` relative
+in the final fields.  That is the same path dependence that any other
+cutback cause (a failed line search, an inadmissible trial state) already
+introduces, and it is bounded by the increment-size controls of the deck,
+not by the defect.  Runs that log a cutback or an unusually long line search
+in `run_log.json` can be recognized as affected after the fact, since the
+Newton history records backtracks and constraint residuals per iteration.
+
+### Dependence of the failure rate on system size
+
+Whether the per-factorization probability grows or shrinks with the number
+of unknowns cannot be settled from the structure of the code alone, because
+two effects pull in opposite directions.
+
+- The racing accesses sit at supernode boundaries: the pivot-row interchange
+  of one supernode against the dense update kernels of another thread that
+  consumes it, and the gather of a finished column against a thread reading
+  it.  The number of such hand-offs per factorization grows roughly with the
+  number of supernodes, which for a 3D finite-element matrix grows close to
+  linearly with the number of unknowns.  By itself this raises the expected
+  number of exposures per factorization.
+- The window of each exposure is a short interchange or gather, while the
+  work between exposures is dense arithmetic on supernodes whose size grows
+  with the problem.  On the `561`-unknown system the factors hold six times
+  the entries of `A`; on the `17,193`-unknown snapshot they hold 68 times
+  (`nnz(L) + nnz(U)` of 73 million, 786 MB).  Threads therefore spend a far
+  smaller fraction of their time near a boundary, which lowers the
+  probability that two threads meet inside a window.
+
+The measurement says the two effects roughly cancel on the sizes tested.
+With 16 threads and the same program, the `561`-unknown matrix gave 10, 15,
+6, and 9 wrong solves in four runs of 5,000 (about `2e-3` per
+factorization), and the `17,193`-unknown snapshot gave 1 wrong solve in 600
+(about `1.7e-3`, with a wide confidence interval: one event).  The earlier 30
+clean repetitions at eight threads were simply too few to see a rate of this
+size.  The factorization is also not reproducible on the large system:
+`nnz(U)` differed by seven entries between two 16-thread runs, so the pivot
+sequence depends on timing there as well.  The conclusion is that the
+per-factorization rate at 16 threads is of order `1e-3` across a factor 30 in
+system size and a factor 600 in factor size, and there is no reason to expect
+it to vanish at larger sizes.
+
+The exposure per analysis is therefore what matters: a run with a few
+hundred increments and several Newton iterations each performs on the order
+of a thousand factorizations, so at a rate of `1e-3` one or two affected
+iterations per run are to be expected at 16 threads, each costing a wasted
+iteration or a cutback as traced above.  The mechanisms above make that an
+efficiency and path cost, not a correctness one.  The post-solve residual
+check listed below would remove even that cost, and its price, one sparse
+matrix-vector product per solve, is negligible against a factorization of
+this size; it has moved from optional to recommended.  Measurements at other
+sizes or thread counts can be made with the reproducer
+(`native/superlu_mt_race/`, any Matrix Market file on stdin).
 
 Two follow-ups are recorded here and not done: a residual check after each
-SuperLU_MT solve in the bridge (one sparse matrix-vector product, negligible
-against a factorization) with refactor-and-retry, which would remove even the
-wasted iteration; and re-running the reproducer when a new SuperLU_MT release
-appears, before bumping the pin.
+SuperLU_MT solve in the bridge or its Python wrapper (one sparse
+matrix-vector product, negligible against a factorization) with
+refactor-and-retry, which would remove the wasted iterations and cutbacks
+and is recommended given the size-independent rate measured below; and
+re-running the reproducer when a new SuperLU_MT release appears, before
+bumping the pin.
 
 ## Archived KKT snapshots
 
@@ -212,9 +339,10 @@ the migration.
 The migration from the fork to upstream `v4.1.0` is numerically neutral:
 bit-identical with one or two solver threads, and indistinguishable from
 same-binary repeat noise with more.  The sporadic wrong solves at four or more
-threads on small systems exist equally in both builds, are detected and
-absorbed by the Newton loop, and are handed to upstream through the standalone
-reproducer in `native/superlu_mt_race/`.
+threads exist equally in both builds and at the same rate on small and
+production-size systems, are detected and absorbed by the Newton loop at the
+cost of wasted iterations or cutbacks, and are handed to upstream through the
+standalone reproducer in `native/superlu_mt_race/`.
 
 ## Recipe
 

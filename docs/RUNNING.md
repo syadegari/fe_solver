@@ -97,12 +97,17 @@ implicit thread-count default; omitting `--num-threads` is an input error. The s
 recorded in `run_log.json`.
 
 Known issue: with four or more solver threads, SuperLU_MT occasionally returns a wrong solution for a small KKT
-system while reporting success, at a rate of roughly one in a thousand factorizations on a 561-unknown system and
-not observed on systems above 17,000 unknowns.  The Newton loop detects the bad direction through its residual and
-line-search checks and recovers, usually at the cost of one extra iteration and occasionally a step cutback, so the
-converged response is unaffected within the convergence tolerances.  One and two threads are deterministic and
-unaffected.  See [the migration record](../verification/superlu_mt_results/UPSTREAM_MIGRATION.md) and the
-[standalone reproducer](../native/superlu_mt_race/README.md).
+system while reporting success, at a rate of roughly one to two in a thousand factorizations at 16 threads, measured
+on a 561-unknown and on a 17,193-unknown system alike.  The Newton loop detects the bad direction through its
+residual and line-search checks and recovers, usually at the cost of one extra iteration and occasionally a step
+cutback, so the converged response is unaffected within the convergence tolerances.  Convergence is always judged on
+residuals recomputed from the trial state, never on the solver output, so a wrong solve cannot enter the results;
+with `modified_newton` the corrupted factor is reused for the rest of the attempt and the recovery goes through a
+cutback, which costs more iterations.  One and two threads are deterministic and unaffected.  Expect one or two
+affected iterations in a run with a thousand factorizations; a cutback changes the step sequence and therefore the
+load path slightly for history-dependent materials.  See
+[the migration record](../verification/superlu_mt_results/UPSTREAM_MIGRATION.md) for the execution-path trace and
+the measurements, and the [standalone reproducer](../native/superlu_mt_race/README.md).
 
 ### PETSc LGMRES (development branch)
 
