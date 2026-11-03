@@ -96,6 +96,14 @@ The bridge is loaded from `build/native/libsuperlu_mt_bridge.so` only when `supe
 implicit thread-count default; omitting `--num-threads` is an input error. The selected backend and its thread count are
 recorded in `run_log.json`.
 
+Known issue: with four or more solver threads, SuperLU_MT occasionally returns a wrong solution for a small KKT
+system while reporting success, at a rate of roughly one in a thousand factorizations on a 561-unknown system and
+not observed on systems above 17,000 unknowns.  The Newton loop detects the bad direction through its residual and
+line-search checks and recovers, usually at the cost of one extra iteration and occasionally a step cutback, so the
+converged response is unaffected within the convergence tolerances.  One and two threads are deterministic and
+unaffected.  See [the migration record](../verification/superlu_mt_results/UPSTREAM_MIGRATION.md) and the
+[standalone reproducer](../native/superlu_mt_race/README.md).
+
 ### PETSc LGMRES (development branch)
 
 PETSc LGMRES is a third selectable backend on `feature/iterative-solvers`; both direct backends remain available. The commands in this subsection require that development branch, not `main`.

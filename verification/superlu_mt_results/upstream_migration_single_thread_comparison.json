@@ -1,0 +1,27 @@
+{
+  "reference": "/tmp/slumt_migration/results/fork_t1_a/run.h5",
+  "candidate": "/tmp/slumt_migration/results/upstream_t1/run.h5",
+  "passed": true,
+  "exact_numeric_datasets": 19,
+  "tolerance_numeric_datasets": 0,
+  "worst_absolute": {
+    "path": "curves/0000/time",
+    "exact": true,
+    "max_absolute": 0.0,
+    "max_relative": 0.0
+  },
+  "worst_relative": {
+    "path": "curves/0000/time",
+    "exact": true,
+    "max_absolute": 0.0,
+    "max_relative": 0.0
+  },
+  "structural_errors": [],
+  "normalized_datasets": [
+    "meta/input_segments_json:git_commit,resolved_input.output.directory",
+    "meta/resolved_input_json:output.directory"
+  ],
+  "ignored_attributes": [
+    "/:git_commit"
+  ]
+}

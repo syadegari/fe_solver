@@ -94,3 +94,31 @@ set_target_properties(
         OUTPUT_NAME superlu_mt_bridge
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native"
 )
+
+# ---------------------------------------------------------------------------
+# Optional standalone reproducer for the sporadic wrong solutions that
+# multithreaded SuperLU_MT returns on small systems; see
+# native/superlu_mt_race/README.md.  Not built by default and not a test,
+# because the failure is probabilistic.
+# ---------------------------------------------------------------------------
+add_executable(
+    superlu_mt_race_repro
+    EXCLUDE_FROM_ALL
+    native/superlu_mt_race/superlu_mt_race_repro.c
+)
+target_include_directories(
+    superlu_mt_race_repro
+    PRIVATE
+        ${superlu_mt_SOURCE_DIR}/SRC
+)
+target_link_libraries(
+    superlu_mt_race_repro
+    PRIVATE
+        superlu_mt_PTHREAD
+        m
+)
+set_target_properties(
+    superlu_mt_race_repro
+    PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/native"
+)

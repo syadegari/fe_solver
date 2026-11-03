@@ -142,9 +142,10 @@ The suite checks material and element derivatives, independent F-bar tangent for
 | Element/material tangents and homogeneous acceptance cases | [Acceptance results](docs/ACCEPTANCE_RESULTS.md), [numerical tests](tests/test_numerics.py) |
 | J2 necking, formulation differences, and mesh sensitivity | [Closed formulation study](verification/j2_formulation_study/README.md) |
 | SciPy/SuperLU versus SuperLU_MT solution agreement | [Backend comparison](verification/superlu_mt_results/README.md) |
+| SuperLU_MT fork-to-upstream migration and the multithreading defect found with it | [Migration record](verification/superlu_mt_results/UPSTREAM_MIGRATION.md), [standalone reproducer](native/superlu_mt_race/README.md) |
 | Heterogeneous periodic TRIP examples and average-deformation checks | [Accepted RVE results](verification/multiphase_trip_results/README.md) |
 
-This is a research solver with the element and loading scope listed above. Localized plastic-strain peaks and localization width can depend on mesh resolution. The TRIP source/library is private: archived outputs and plots are available, with large binary datasets stored through Git LFS, but repeating those solves requires the external model. Verification of that integration does not independently validate the constitutive physics.
+This is a research solver with the element and loading scope listed above. Localized plastic-strain peaks and localization width can depend on mesh resolution. The TRIP source/library is private: archived outputs and plots are available, with large binary datasets stored through Git LFS, but repeating those solves requires the external model. Verification of that integration does not independently validate the constitutive physics. Multithreaded SuperLU_MT occasionally returns a wrong linear solve on small systems; the Newton loop detects and recovers from it, and a reproducer has been prepared for the upstream maintainers (see the [running guide](docs/RUNNING.md#superlu_mt-backend)).
 
 Retrieve archived binary results with `git lfs pull`.
 

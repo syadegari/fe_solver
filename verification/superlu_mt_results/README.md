@@ -3,6 +3,10 @@
 Status: numerical backend comparison completed on 2026-09-28.  The separate
 modified-Newton behavior review is deferred.
 
+The later switch of the SuperLU_MT dependency from a fork to upstream `v4.1.0`,
+and the multithreading defect found while checking it, are recorded in
+[UPSTREAM_MIGRATION.md](UPSTREAM_MIGRATION.md).
+
 ## Study definition
 
 The four runs use the same `8 x 8 x 8` periodic elastic-core/J2-matrix cube,

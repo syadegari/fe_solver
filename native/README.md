@@ -34,3 +34,8 @@ solver limits nested BLAS pools to one thread around SuperLU_MT factorization an
 solve, and in each element worker. SuperLU_MT's own thread count remains explicit.
 The Python test suite compares the built bridge against SciPy; this check is
 skipped if the shared library has not been built.
+
+`superlu_mt_race/` holds a self-contained reproducer for the sporadic wrong
+solutions that multithreaded SuperLU_MT returns on small systems, prepared for
+the upstream maintainers; build it with
+`cmake --build build --target superlu_mt_race_repro`.
