@@ -28,10 +28,17 @@ from .linear_solver import (
     solve_factor,
 )
 from .preprocess import PreparedAnalysis, prepare_analysis
+from .superlu_mt_params import (
+    PARAMS_TABLE as SUPERLU_MT_PARAMS_TABLE,
+    print_override_banner,
+    resolve_params,
+)
 from .reporting import (
     build_analysis_summary,
+    print_factor_diagnostics_summary,
     print_linear_system_summary,
     print_startup_summary,
+    record_factor_diagnostics,
     record_sparse_system,
 )
 from .types import ModelError, RecoverableError
@@ -117,6 +124,7 @@ def _newton_attempt(
     element_executor: ElementExecutor | None = None,
     debug_timing: bool = False,
     linear_system_observer: Callable[[sparse.csr_matrix], None] | None = None,
+    factor_observer: Callable[[object], None] | None = None,
     linear_solver: LinearSolverConfig | None = None,
 ) -> _NewtonResult:
     linear_solver = linear_solver or LinearSolverConfig("scipy_splu")
@@ -240,6 +248,8 @@ def _newton_attempt(
                         linear_system_observer(frozen_K)
                     with timer(record, "kkt_factorization_wall_seconds"):
                         factor = _factor_kkt(frozen_K, C, ordering, linear_solver)
+                    if factor_observer is not None:
+                        factor_observer(factor)
                 assert factor is not None
                 with timer(record, "kkt_solve_wall_seconds"):
                     correction = solve_factor(
@@ -385,6 +395,7 @@ def run_analysis(
     debug_timing: bool = False,
     solver_backend: str | None = None,
     num_threads: int | None = None,
+    superlu_mt_params_file: str | Path | None = None,
 ) -> AnalysisResult:
     analysis_wall_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
@@ -392,10 +403,26 @@ def run_analysis(
     mesh = prepared.mesh
     model = prepared.model
     constraints = prepared.constraints
-    linear_solver = LinearSolverConfig(
-        solver_backend or str(deck.data["linear_solver"]["backend"]),
-        num_threads,
-    )
+    linear_solver_table = deck.data["linear_solver"]
+    backend = solver_backend or str(linear_solver_table["backend"])
+    superlu_mt_params = None
+    if backend == "superlu_mt":
+        # The command line wins over the deck so the person running the
+        # experiment can always redirect the expert knobs without editing a deck.
+        params_file = superlu_mt_params_file or linear_solver_table.get(
+            "superlu_mt_params_file"
+        )
+        if params_file is not None and superlu_mt_params_file is None:
+            params_file = deck.resolve(str(params_file))
+        superlu_mt_params = resolve_params(
+            linear_solver_table.get(SUPERLU_MT_PARAMS_TABLE), params_file
+        )
+    elif SUPERLU_MT_PARAMS_TABLE in linear_solver_table:
+        raise ModelError(
+            f"deck [linear_solver.{SUPERLU_MT_PARAMS_TABLE}] is set but the active "
+            f"backend is {backend!r}; these parameters apply only to superlu_mt"
+        )
+    linear_solver = LinearSolverConfig(backend, num_threads, superlu_mt_params)
     events = prepared.events.copy()
     restart_times = prepared.restart_times
     analysis = deck.data["analysis"]
@@ -466,13 +493,18 @@ def run_analysis(
         solution_options={
             "ordering": str(deck.data["linear_solver"].get("ordering", "COLAMD")),
             **(
-                {"num_threads": linear_solver.num_threads}
+                {
+                    "num_threads": linear_solver.num_threads,
+                    "superlu_mt": linear_solver.superlu_mt_params.summary_options(),
+                }
                 if linear_solver.backend == "superlu_mt"
                 else {}
             ),
         },
     )
     print_startup_summary(analysis_summary)
+    if linear_solver.superlu_mt_params is not None:
+        print_override_banner(linear_solver.superlu_mt_params)
     print(executor.describe())
     result = AnalysisResult(
         model,
@@ -503,6 +535,19 @@ def run_analysis(
             system_stored_entries=kkt_entries,
         )
         print_linear_system_summary(result.analysis)
+
+    def observe_factor(factor: object) -> None:
+        # Report the first successful factorization only: the sparsity-driven
+        # quantities are representative, and the diagnostic is startup
+        # information, not a per-iteration log.
+        linear = result.analysis["linear_system"]
+        if "factor_diagnostics" in linear:
+            return
+        diagnostics = getattr(factor, "diagnostics", None)
+        if diagnostics is None:
+            return
+        record_factor_diagnostics(result.analysis, diagnostics)
+        print_factor_diagnostics_summary(result.analysis)
 
     writer: HDF5ResultWriter | None = None
     try:
@@ -557,6 +602,7 @@ def run_analysis(
                         element_executor=executor,
                         debug_timing=debug_timing,
                         linear_system_observer=observe_linear_system,
+                        factor_observer=observe_factor,
                         linear_solver=linear_solver,
                     )
                 except RecoverableError:

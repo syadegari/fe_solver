@@ -40,6 +40,16 @@ def main(argv: list[str] | None = None) -> None:
         metavar="N",
         help="required number of threads when using superlu_mt",
     )
+    solve.add_argument(
+        "--superlu-mt-params",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help=(
+            "expert-level TOML file pinning SuperLU_MT factorization parameters; "
+            "overrides linear_solver.superlu_mt_params_file from the deck"
+        ),
+    )
     post = commands.add_parser("postprocess", help="create temporal XDMF from a run database")
     post.add_argument("database", type=Path, help="path to run.h5")
     post.add_argument("--output", type=Path, default=None, help="output .xdmf path")
@@ -56,6 +66,7 @@ def main(argv: list[str] | None = None) -> None:
             debug_timing=args.debug_timing,
             solver_backend=args.solver_backend,
             num_threads=args.num_threads,
+            superlu_mt_params_file=args.superlu_mt_params,
         )
     except ModelError as exc:
         parser.exit(2, f"error: {exc}\n")

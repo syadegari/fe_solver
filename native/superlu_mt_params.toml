@@ -1,0 +1,78 @@
+# Expert-level SuperLU_MT factorization parameters -- TEMPLATE, NOT LOADED BY DEFAULT
+#
+# This file does nothing on its own.  Placing it here, or editing it, changes no
+# run.  It is read only when a run names it explicitly:
+#
+#     fe-solver solve deck.toml --solver-backend superlu_mt --num-threads 8 \
+#         --superlu-mt-params native/superlu_mt_params.toml
+#
+# or when a deck opts in:
+#
+#     [linear_solver]
+#     superlu_mt_params_file = "../native/superlu_mt_params.toml"   # relative to the deck
+#
+# The command-line flag wins over the deck key.  A deck may also set the same
+# parameters inline, and those win over this file:
+#
+#     [linear_solver.superlu_mt]
+#     diag_pivot_thresh = 0.1
+#
+# Resolution order, least to most specific:
+#     built-in defaults  <-  this file  <-  deck [linear_solver.superlu_mt]
+#
+# Whenever any parameter here differs from the built-in default, the solver
+# prints a banner at startup naming every overridden parameter, its default, and
+# the sha256 of this file, and records the same provenance in the run summary.
+# A tuned run is therefore never mistakable for a default one.
+#
+# Defaults are NOT duplicated here on purpose: they live in
+# fe_solver/superlu_mt_params.py (DEFAULTS) and, for the -1 sentinels, in
+# SuperLU_MT's own sp_ienv().  Every key below is commented out, so this file as
+# shipped is equivalent to the defaults.
+#
+# Unknown keys are a hard error, not a warning -- a typo cannot silently degrade
+# into a default.
+#
+# Note: num_threads is deliberately NOT configurable here or in any deck.  The
+# thread count belongs to whoever runs the experiment, so it stays on the solver
+# command line (--num-threads) and nowhere else.
+
+[superlu_mt]
+
+# Diagonal pivoting threshold, in [0, 1].
+#   1.0 = partial pivoting (default, most accurate)
+#   0.0 = no diagonal pivoting preference
+# Values below 1.0 trade numerical accuracy for speed and trigger an explicit
+# warning in the startup banner.
+# diag_pivot_thresh = 1.0
+
+# Columns per panel in the supernodal factorization.
+#   -1 = use SuperLU_MT's own sp_ienv(1) (default)
+#   >= 1 = pin the panel width
+# panel_size = 8
+
+# Relaxed supernode size: subtrees with at most this many nodes are treated as a
+# single relaxed supernode.
+#   -1 = use SuperLU_MT's own sp_ienv(2) (default)
+#   >= 0 = pin the relaxation
+# relax = 6
+
+# Initial storage estimates for the factors.
+# Practical guide: docs/SUPERLU_MT_FACTOR_STORAGE.md
+# All three share the sp_ienv(6/7/8) semantics:
+#   negative = fill-growth factor: |value| x nnz(A) entries are allocated
+#   positive = ABSOLUTE number of entries (easy to confuse with the above!)
+#   0        = use SuperLU_MT's own sp_ienv default (-50 / -50 / -30)
+# Raise these when a run dies with "Storage for ... exceeded": that message
+# means the factors outgrew the allocation and SuperLU_MT killed the process.
+# If the raised request does not fit in RAM, the library halves it and prints a
+# warning to stderr -- check for that message if the abort persists.
+
+# L supernode numerical values; sp_ienv(6), default growth factor -50.
+# fill_lusup = -100
+
+# U column storage; sp_ienv(7), default growth factor -50.
+# fill_ucol = -100
+
+# L supernode row subscripts; sp_ienv(8), default growth factor -30.
+# fill_lsub = -60

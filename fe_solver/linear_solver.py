@@ -11,6 +11,7 @@ from scipy import sparse
 from scipy.sparse.linalg import MatrixRankWarning, splu
 from threadpoolctl import threadpool_limits
 
+from .superlu_mt_params import SuperLUMTParams
 from .types import ModelError
 
 
@@ -26,11 +27,18 @@ SUPERLU_MT_LIBRARY = (
 class LinearSolverConfig:
     backend: str
     num_threads: int | None = None
+    superlu_mt_params: SuperLUMTParams | None = None
 
     def __post_init__(self) -> None:
         if self.backend not in {"scipy_splu", "superlu_mt"}:
             raise ModelError(f"unsupported linear solver backend {self.backend!r}")
+        if self.backend != "superlu_mt" and self.superlu_mt_params is not None:
+            raise ModelError(
+                "SuperLU_MT parameters are valid only with the superlu_mt backend"
+            )
         if self.backend == "superlu_mt":
+            if self.superlu_mt_params is None:
+                object.__setattr__(self, "superlu_mt_params", SuperLUMTParams())
             if (
                 isinstance(self.num_threads, bool)
                 or not isinstance(self.num_threads, (int, np.integer))
@@ -77,12 +85,14 @@ def factor_kkt(
             from native.superlu_mt_backend import SuperLUMTFactor
 
             assert config.num_threads is not None
+            params = config.superlu_mt_params or SuperLUMTParams()
             with threadpool_limits(limits=1):
                 return SuperLUMTFactor.factor(
                     _load_superlu_mt(),
                     kkt,
                     nprocs=config.num_threads,
                     ordering=ordering,
+                    **params.factor_kwargs(),
                 )
     except (RuntimeError, MatrixRankWarning) as exc:
         raise ModelError(

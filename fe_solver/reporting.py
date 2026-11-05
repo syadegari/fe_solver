@@ -99,6 +99,48 @@ def record_sparse_system(
     }
 
 
+def record_factor_diagnostics(
+    summary: dict[str, object], diagnostics: dict[str, float]
+) -> None:
+    """Attach the native backend's first-factorization diagnostics."""
+    summary["linear_system"]["factor_diagnostics"] = {
+        "nnz_L": float(diagnostics["nnz_L"]),
+        "nnz_U": float(diagnostics["nnz_U"]),
+        "factor_flops": float(diagnostics["factor_flops"]),
+        "lu_storage_bytes": float(diagnostics["lu_storage_bytes"]),
+        "total_needed_bytes": float(diagnostics["total_needed_bytes"]),
+        "expansions": int(diagnostics["expansions"]),
+    }
+
+
+def print_factor_diagnostics_summary(summary: dict[str, object]) -> None:
+    linear = summary["linear_system"]
+    diag = linear.get("factor_diagnostics")
+    if diag is None:
+        return
+    system_entries = linear.get("matrices", {}).get("system", {}).get(
+        "stored_entries"
+    )
+    fill_note = ""
+    if system_entries:
+        growth = (diag["nnz_L"] + diag["nnz_U"]) / float(system_entries)
+        fill_note = f"; fill growth {growth:.1f}x nnz(KKT)"
+    print(
+        f"factor diagnostics: nnz(L)={diag['nnz_L']:.4g}, "
+        f"nnz(U)={diag['nnz_U']:.4g}{fill_note}; "
+        f"{diag['factor_flops']:.3g} flops; "
+        f"LU storage {diag['lu_storage_bytes'] / 1.0e6:.1f} MB, "
+        f"total needed {diag['total_needed_bytes'] / 1.0e6:.1f} MB; "
+        f"expansions {diag['expansions']}"
+    )
+    if diag["expansions"] > 0:
+        print(
+            "factor diagnostics: WARNING: the factor arrays outgrew their "
+            "initial storage estimate and were expanded; consider raising "
+            "fill_lusup/fill_ucol/fill_lsub (see docs/SUPERLU_MT_FACTOR_STORAGE.md)"
+        )
+
+
 def print_linear_system_summary(summary: dict[str, object]) -> None:
     linear = summary["linear_system"]
     unknowns = linear["unknowns"]
@@ -112,6 +154,15 @@ def print_linear_system_summary(summary: dict[str, object]) -> None:
     backend_description = str(linear["backend"])
     if "num_threads" in linear["options"]:
         backend_description += f" ({linear['options']['num_threads']} threads)"
+    # Repeat any expert override here so it is attached to the line that gets
+    # quoted in benchmark and verification notes, not only to the startup banner.
+    superlu_mt = linear["options"].get("superlu_mt", {})
+    overridden = superlu_mt.get("overridden", [])
+    if overridden:
+        tuned = ", ".join(
+            f"{name}={superlu_mt['values'][name]!r}" for name in overridden
+        )
+        backend_description += f" [TUNED: {tuned}]"
     print(
         f"linear system: {backend_description} {system['name']}; "
         f"{primary['name']} {primary['shape'][0]} x {primary['shape'][1]} with "

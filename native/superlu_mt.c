@@ -1,12 +1,7 @@
-// TODO: 
 /*
-  - Add diagnostics after successful pdgstrf():
-     collect the followings:
-       - Actual nnz(L), nnz(U)
-       - Factorization flop from Gstat_t
-       - Various storages from QuerySpace and other routines in pdmemory.c
-    These could be useful diagnostics if we wanna tackle the fixed sizes
-    of U and L and memory errors they generate for large meshes
+  Diagnostics after a successful pdgstrf() -- nnz(L), nnz(U), factorization
+  flops, QuerySpace storage -- are captured in slumt_factor() and exposed via
+  slumt_factor_diagnostics().
 */
 
 #include "slu_mt_ddefs.h"
@@ -34,6 +29,15 @@ typedef struct {
     int stat_allocated;
     int initialized;
     int factor_called;
+
+    /* Snapshot taken right after a successful pdgstrf(); see
+       slumt_factor_diagnostics(). */
+    double diag_nnz_L;
+    double diag_nnz_U;
+    double diag_factor_flops;
+    double diag_lu_storage_bytes;
+    double diag_total_needed_bytes;
+    double diag_expansions;
 } slumt_handle;
 
 
@@ -42,6 +46,18 @@ typedef struct {
     double diag_pivot_thresh;
     int panel_size;
     int relax;
+    /*
+     * Initial storage estimates for the factors, forwarded to
+     * superlumt_options_t.fill_lusup/fill_ucol/fill_lsub (upstream commit
+     * a05e0a0, in v4.1.0).  Semantics match sp_ienv(6/7/8): negative is a
+     * fill-growth factor on nnz(A), positive is an absolute entry count,
+     * 0 keeps the library default (sp_ienv: -50 / -50 / -30).  Undersized
+     * storage is fatal: the library exits the whole process when the
+     * factors outgrow these arrays mid-factorization.
+     */
+    int fill_lusup;
+    int fill_ucol;
+    int fill_lsub;
 } slumt_factor_config;
 
 
@@ -203,6 +219,15 @@ slumt_factor(
 
     h->initialized = 1;
 
+    /*
+     * pdgstrf_init() resets fill_lusup/fill_ucol/fill_lsub to 0 ("use
+     * sp_ienv"), so any requested storage estimate must be applied after it
+     * and before pdgstrf(), which reads them in pdgstrf_MemInit().
+     */
+    h->options.fill_lusup = (int_t)config->fill_lusup;
+    h->options.fill_ucol = (int_t)config->fill_ucol;
+    h->options.fill_lsub = (int_t)config->fill_lsub;
+
     *setup_seconds = SuperLU_timer_() - t0;
 
     int_t info = 0;
@@ -224,7 +249,74 @@ slumt_factor(
     *factor_seconds = SuperLU_timer_() - t0;
     *info_out = (int)info;
 
+    /*
+     * Snapshot factor diagnostics while L, U and the Gstat are guaranteed
+     * alive.  superlu_dQuerySpace() must run exactly once per factorization:
+     * it decrements the library's static expansion counter on every call.
+     */
+    if (info == 0) {
+        SCPformat *Lstore = (SCPformat *)h->L.Store;
+        NCPformat *Ustore = (NCPformat *)h->U.Store;
+        superlu_memusage_t memusage;
+
+        h->diag_nnz_L = (double)Lstore->nnz;
+        h->diag_nnz_U = (double)Ustore->nnz;
+        /* pdgstrf() accumulates flops per processor; only the pdgssvx()
+           driver folds them into ops[FACT], so sum them here the same way. */
+        h->diag_factor_flops = 0.0;
+        for (int_t i = 0; i < (int_t)nprocs; ++i) {
+            h->diag_factor_flops += (double)h->stat.procstat[i].fcops;
+        }
+        if (superlu_dQuerySpace(
+                (int_t)nprocs, &h->L, &h->U, panel_size, &memusage) == 0) {
+            h->diag_lu_storage_bytes = (double)memusage.for_lu;
+            h->diag_total_needed_bytes = (double)memusage.total_needed;
+            h->diag_expansions = (double)memusage.expansions;
+        }
+    }
+
     return h;
+}
+
+
+/*
+ * Copies the diagnostics captured after the factorization into six doubles:
+ *   nnz_L, nnz_U       stored entries in the factors (L includes supernode
+ *                      padding; the unit of the fill_lusup/fill_lsub budget)
+ *   factor_flops       floating-point operations spent in pdgstrf()
+ *   lu_storage_bytes   memory holding L and U
+ *   total_needed_bytes lu_storage_bytes plus factorization working storage
+ *   expansions         times the library had to grow the factor arrays
+ *                      beyond the initial fill_* estimate
+ *
+ * Returns 0 on success, -1 if the handle has no successful factorization.
+ */
+int
+slumt_factor_diagnostics(
+    void *handle,
+    double *nnz_L,
+    double *nnz_U,
+    double *factor_flops,
+    double *lu_storage_bytes,
+    double *total_needed_bytes,
+    double *expansions
+)
+{
+    slumt_handle *h = handle;
+
+    if (!h || !h->factor_called)
+    {
+        return -1;
+    }
+
+    *nnz_L = h->diag_nnz_L;
+    *nnz_U = h->diag_nnz_U;
+    *factor_flops = h->diag_factor_flops;
+    *lu_storage_bytes = h->diag_lu_storage_bytes;
+    *total_needed_bytes = h->diag_total_needed_bytes;
+    *expansions = h->diag_expansions;
+
+    return 0;
 }
 
 

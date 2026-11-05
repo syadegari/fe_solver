@@ -109,6 +109,61 @@ load path slightly for history-dependent materials.  See
 [the migration record](../verification/superlu_mt_results/UPSTREAM_MIGRATION.md) for the execution-path trace and
 the measurements, and the [standalone reproducer](../native/superlu_mt_race/README.md).
 
+#### Expert-level factorization parameters
+
+The factorization knobs `diag_pivot_thresh`, `panel_size`, `relax` and the factor-storage estimates `fill_lusup`,
+`fill_ucol`, `fill_lsub` have built-in defaults and need not be mentioned by an ordinary run. They are an expert-level
+setting: changing them is opt-in, and every change is announced. The `fill_*` knobs matter when a run dies with
+`Storage for ... exceeded`: SuperLU_MT exits the whole process when the factors outgrow their initial allocation, and
+these estimates (negative = growth factor on nnz(A), positive = absolute entry count, 0 = library default) are the
+only in-process mitigation. For diagnosing and fixing a storage abort, see
+[SUPERLU_MT_FACTOR_STORAGE.md](SUPERLU_MT_FACTOR_STORAGE.md); for the underlying supernode and elimination-tree
+machinery, see [SUPERLU_MT_INTERNALS.md](SUPERLU_MT_INTERNALS.md).
+
+Resolution order, least to most specific:
+
+```
+built-in defaults  <-  expert parameter file  <-  deck [linear_solver.superlu_mt]
+```
+
+The defaults live in `fe_solver/superlu_mt_params.py` (`DEFAULTS`) and, for the `-1` sentinels of `panel_size` and
+`relax`, in SuperLU_MT's own `sp_ienv()`. They are deliberately not duplicated into any TOML file.
+
+An expert parameter file is read only when a run names it. `native/superlu_mt_params.toml` is a commented template
+whose keys are all commented out; its mere presence changes nothing.
+
+```bash
+python -m fe_solver examples/case_a_hex8.toml \
+  --solver-backend superlu_mt --num-threads 8 \
+  --superlu-mt-params native/superlu_mt_params.toml
+```
+
+A deck may instead point at a file, with the path taken relative to the deck, and may pin parameters inline. The
+command-line flag wins over the deck key, and inline deck parameters win over the file:
+
+```toml
+[linear_solver]
+backend = "superlu_mt"
+superlu_mt_params_file = "../native/superlu_mt_params.toml"   # optional
+
+[linear_solver.superlu_mt]                                     # optional, highest precedence
+panel_size = 20
+```
+
+Deviations are made hard to miss:
+
+- A startup banner names every overridden parameter with its default and where the value came from, plus the path and
+  sha256 of any parameter file. A run on defaults prints no banner at all, so the banner's presence is itself the
+  signal. A `diag_pivot_thresh` below 1.0 adds an explicit accuracy warning.
+- The `linear system:` line is tagged `[TUNED: ...]`, so the tag travels with any quoted benchmark or verification line.
+- `run_log.json` records the effective values, the per-parameter source, the defaults they were compared against, and
+  the parameter file's path and digest.
+- Unknown or out-of-range parameters are a hard error in both the file and the deck. A typo cannot silently degrade
+  into a default.
+
+`num_threads` is deliberately not configurable in any file. The thread count belongs to whoever runs the experiment,
+not to whoever prepares the deck, so it stays on the command line.
+
 ### PETSc LGMRES (development branch)
 
 PETSc LGMRES is a third selectable backend on `feature/iterative-solvers`; both direct backends remain available. The commands in this subsection require that development branch, not `main`.

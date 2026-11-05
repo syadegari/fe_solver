@@ -21,6 +21,12 @@ class SuperLUMTConfig(ctypes.Structure):
         ("diag_pivot_thresh", ctypes.c_double),
         ("panel_size", ctypes.c_int),
         ("relax", ctypes.c_int),
+        # Initial factor-storage estimates, sp_ienv(6/7/8) semantics:
+        # negative = growth factor on nnz(A), positive = absolute entry
+        # count, 0 = library default.
+        ("fill_lusup", ctypes.c_int),
+        ("fill_ucol", ctypes.c_int),
+        ("fill_lsub", ctypes.c_int),
     ]
 
 
@@ -70,6 +76,17 @@ def load_superlu_mt(path: str | Path) -> ctypes.CDLL:
 
     lib.slumt_free.argtypes = [ctypes.c_void_p]
     lib.slumt_free.restype = None
+
+    lib.slumt_factor_diagnostics.argtypes = [
+        ctypes.c_void_p,
+        _C_DOUBLE_P,   # nnz_L
+        _C_DOUBLE_P,   # nnz_U
+        _C_DOUBLE_P,   # factor_flops
+        _C_DOUBLE_P,   # lu_storage_bytes
+        _C_DOUBLE_P,   # total_needed_bytes
+        _C_DOUBLE_P,   # expansions
+    ]
+    lib.slumt_factor_diagnostics.restype = ctypes.c_int
 
     return lib
 
@@ -131,6 +148,28 @@ class SuperLUMTFactor:
         self.setup_seconds = setup_seconds
         self.factor_seconds = factor_seconds
         self.solve_seconds = 0.0
+        # Captured eagerly so the numbers survive close(); the C snapshot is
+        # taken once per factorization (QuerySpace must not run twice).
+        self.diagnostics = self._read_diagnostics()
+
+    def _read_diagnostics(self) -> dict[str, float] | None:
+        values = [ctypes.c_double() for _ in range(6)]
+        status = self._lib.slumt_factor_diagnostics(
+            self._handle, *(ctypes.byref(v) for v in values)
+        )
+        if status != 0:
+            return None
+        nnz_l, nnz_u, flops, lu_bytes, total_bytes, expansions = (
+            v.value for v in values
+        )
+        return {
+            "nnz_L": nnz_l,
+            "nnz_U": nnz_u,
+            "factor_flops": flops,
+            "lu_storage_bytes": lu_bytes,
+            "total_needed_bytes": total_bytes,
+            "expansions": expansions,
+        }
 
     @classmethod
     def factor(
@@ -143,6 +182,9 @@ class SuperLUMTFactor:
         diag_pivot_thresh: float = 1.0,
         panel_size: int = -1,
         relax: int = -1,
+        fill_lusup: int = 0,
+        fill_ucol: int = 0,
+        fill_lsub: int = 0,
     ) -> "SuperLUMTFactor":
         """Factor a canonical float64/int32 CSC matrix without converting it."""
         _validate_csc(A)
@@ -161,6 +203,9 @@ class SuperLUMTFactor:
             diag_pivot_thresh=diag_pivot_thresh,
             panel_size=panel_size,
             relax=relax,
+            fill_lusup=fill_lusup,
+            fill_ucol=fill_ucol,
+            fill_lsub=fill_lsub,
         )
 
         setup_seconds = ctypes.c_double()
