@@ -55,6 +55,23 @@ Mathematical reference: `docs/FORMULATION.tex` (PDF copy is for human reading). 
 - Do not add co-author or assistance trailers unless the user requests them for a particular commit.
 - Do not rewrite existing commit identities unless the user explicitly requests a history rewrite.
 
+### Testing core budget
+
+This machine has 16 physical cores and is shared with other work, so a test run
+must never claim all of them.
+
+- Reserve at most half the machine: **8 threads/cores** for any locally launched
+  test, benchmark, or sweep. Thread counts in the test suite are literals; keep
+  them at or below 8.
+- When a measurement genuinely needs all 16 cores, do not just launch it.
+  Preferred: prepare the run script, including report generation, and ask the
+  user to execute it. Acceptable only if quick: confirm the cores are actually
+  idle, then run with explicit CPU pinning. A resource manager such as Slurm is
+  a long-term option and must not be assumed present.
+- The thread-sweep scripts under `native/` (`benchmark_superlu_mt.py` and the
+  race reproducer) exceed this budget by design. They are user-launched tools,
+  not part of the automated suite.
+
 ### Verification execution
 
 - Run small tests and bounded verification locally in `py3.14`.
