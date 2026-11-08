@@ -177,6 +177,8 @@ SciPy/SuperLU and SuperLU_MT are integrated; modified Newton reuses its factoriz
 * [x] Benchmark SuperLU_MT thread scaling on representative FE systems.
 * [x] Integrate SuperLU_MT as a selectable backend with lazy loading.
 * [x] Reuse factorizations within modified-Newton increments.
+* [x] Update the SuperLU_MT bridge to a selected upstream revision.
+* [x] Expose SuperLU_MT diagnostics and storage/blocking tuning through a separate TOML file.
 
 </details>
 
@@ -189,8 +191,7 @@ SciPy/SuperLU and SuperLU_MT are integrated; modified Newton reuses its factoriz
 * [ ] Verify PETSc MPI integration and compare small FE runs with SuperLU_MT.
 * [ ] Validate PETSc tuning on larger frozen KKT systems.
 * [ ] Reuse SuperLU_MT symbolic analysis when KKT sparsity is unchanged (`refact=YES`).
-* [ ] Update the SuperLU_MT bridge to a selected upstream revision.
-* [ ] Expose SuperLU_MT diagnostics and `ienv(7:9)` tuning through a separate TOML file.
+* [ ] Tune the SuperLU_MT blocking parameters against measured factorization time on representative systems.
 * [ ] After PETSc validation, assess a shared-memory solver path without `mpiexec`.
 
 ### Nonlinear solver and elements

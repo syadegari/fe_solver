@@ -58,7 +58,119 @@ typedef struct {
     int fill_lusup;
     int fill_ucol;
     int fill_lsub;
+    /*
+     * Blocking parameters, served by this file's sp_ienv() override below.
+     * -1 keeps the upstream default.
+     */
+    int max_supernode;      /* sp_ienv(3) */
+    int rowblk;             /* sp_ienv(4) */
+    int colblk;             /* sp_ienv(5) */
 } slumt_factor_config;
+
+
+/*
+ * sp_ienv() override.
+ *
+ * SuperLU_MT reads its blocking parameters through sp_ienv(), which takes no
+ * context argument, so the only way to influence sp_ienv(3..5) is to provide
+ * our own definition.  This is the mechanism upstream itself uses: EXAMPLE/
+ * and TESTING/ each ship an sp_ienv.c that replaces the SRC/ one.  Because
+ * superlu_mt is linked as a static archive and sp_ienv.o defines no other
+ * symbol, the linker resolves every internal reference to this definition and
+ * never pulls in the upstream object.
+ *
+ * The returned defaults replicate the generic (non-MACH) branch of
+ * SRC/sp_ienv.c exactly.  If the upstream file or the build's MACH setting
+ * ever changes, these must be revisited; slumt_sp_ienv_defaults() exists so a
+ * test can assert they still agree.
+ *
+ * Threading: the overrides are plain globals, read by worker threads during
+ * pdgstrf().  slumt_factor() sets them before pdgstrf() and does not touch
+ * them while it runs, which is safe for the solver's one-factorization-at-a-
+ * time usage.  Concurrent factorizations in a single process would race and
+ * are not supported.
+ */
+static int slumt_env_max_supernode = -1;
+static int slumt_env_rowblk = -1;
+static int slumt_env_colblk = -1;
+
+int_t
+slumt_sp_ienv_defaults(int_t ispec)
+{
+    switch (ispec) {
+        case 1: return (20);
+        case 2: return (6);
+        case 3: return (200);
+        case 4: return (200);
+        case 5: return (100);
+        case 6: return (-50);
+        case 7: return (-50);
+        case 8: return (-30);
+    }
+    return (0);
+}
+
+/* Counts calls reaching this override, so a test can prove the library's
+   internals resolve sp_ienv() here and not to the upstream SRC/sp_ienv.o. */
+static long slumt_sp_ienv_calls = 0;
+
+long
+slumt_sp_ienv_call_count(void)
+{
+    return slumt_sp_ienv_calls;
+}
+
+int_t
+sp_ienv(int_t ispec)
+{
+    ++slumt_sp_ienv_calls;
+    switch (ispec) {
+        case 3:
+            if (slumt_env_max_supernode > 0) return (int_t)slumt_env_max_supernode;
+            break;
+        case 4:
+            if (slumt_env_rowblk > 0) return (int_t)slumt_env_rowblk;
+            break;
+        case 5:
+            if (slumt_env_colblk > 0) return (int_t)slumt_env_colblk;
+            break;
+        default:
+            break;
+    }
+    return slumt_sp_ienv_defaults(ispec);
+}
+
+
+/*
+ * SuperLU_MT reports fatal storage exhaustion by printing to stderr and
+ * calling exit(-1) from inside pdgstrf(), so no error can be returned to
+ * Python and no exception can be raised.  exit() still runs atexit()
+ * handlers, which is the one place left to tell the user what to do.
+ */
+static volatile int slumt_factorization_in_progress = 0;
+
+static void
+slumt_report_abort_during_factorization(void)
+{
+    if (!slumt_factorization_in_progress) {
+        return;
+    }
+    fprintf(
+        stderr,
+        "\n"
+        "[fe-solver] SuperLU_MT terminated the process during factorization.\n"
+        "[fe-solver] If the message above says \"Storage for ... exceeded\", the\n"
+        "[fe-solver] factors outgrew their allocation. Re-run with a larger\n"
+        "[fe-solver] estimate for the array it names:\n"
+        "[fe-solver]   L supernodes -> fill_lusup, U columns -> fill_ucol,\n"
+        "[fe-solver]   L subscripts -> fill_lsub\n"
+        "[fe-solver] e.g. put 'fill_lusup = -100' under [superlu_mt] in a file\n"
+        "[fe-solver] passed as --superlu-mt-params, or under\n"
+        "[fe-solver] [linear_solver.superlu_mt] in the deck.\n"
+        "[fe-solver] See docs/SUPERLU_MT_FACTOR_STORAGE.md\n"
+    );
+    fflush(stderr);
+}
 
 
 /*
@@ -98,7 +210,13 @@ slumt_factor(
         config->diag_pivot_thresh > 1.0 ||
         config->panel_size == 0 ||
         config->panel_size < -1 ||
-        config->relax < -1)
+        config->relax < -1 ||
+        config->max_supernode == 0 ||
+        config->max_supernode < -1 ||
+        config->rowblk == 0 ||
+        config->rowblk < -1 ||
+        config->colblk == 0 ||
+        config->colblk < -1)
     {
         *info_out = -997;
         return NULL;
@@ -118,8 +236,13 @@ slumt_factor(
 
     /* TODO: Describe permc_spec optoins */
 
-    int_t panel_size = config->panel_size == -1 
-    ? sp_ienv(1) 
+    /* Must precede every sp_ienv() consumer, including the two calls below. */
+    slumt_env_max_supernode = config->max_supernode;
+    slumt_env_rowblk = config->rowblk;
+    slumt_env_colblk = config->colblk;
+
+    int_t panel_size = config->panel_size == -1
+    ? sp_ienv(1)
     : (int_t)config->panel_size;
 
     int_t relax = config->relax == -1 
@@ -234,6 +357,15 @@ slumt_factor(
 
     t0 = SuperLU_timer_();
 
+    {
+        static int atexit_registered = 0;
+        if (!atexit_registered) {
+            atexit(slumt_report_abort_during_factorization);
+            atexit_registered = 1;
+        }
+    }
+    slumt_factorization_in_progress = 1;
+
     pdgstrf(
         &h->options,
         &h->AC,
@@ -244,6 +376,7 @@ slumt_factor(
         &info
     );
 
+    slumt_factorization_in_progress = 0;
     h->factor_called = 1;
 
     *factor_seconds = SuperLU_timer_() - t0;

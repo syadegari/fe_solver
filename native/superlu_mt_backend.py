@@ -27,6 +27,11 @@ class SuperLUMTConfig(ctypes.Structure):
         ("fill_lusup", ctypes.c_int),
         ("fill_ucol", ctypes.c_int),
         ("fill_lsub", ctypes.c_int),
+        # Blocking parameters served by the bridge's sp_ienv() override;
+        # -1 keeps the upstream default.
+        ("max_supernode", ctypes.c_int),
+        ("rowblk", ctypes.c_int),
+        ("colblk", ctypes.c_int),
     ]
 
 
@@ -185,6 +190,9 @@ class SuperLUMTFactor:
         fill_lusup: int = 0,
         fill_ucol: int = 0,
         fill_lsub: int = 0,
+        max_supernode: int = -1,
+        rowblk: int = -1,
+        colblk: int = -1,
     ) -> "SuperLUMTFactor":
         """Factor a canonical float64/int32 CSC matrix without converting it."""
         _validate_csc(A)
@@ -206,6 +214,9 @@ class SuperLUMTFactor:
             fill_lusup=fill_lusup,
             fill_ucol=fill_ucol,
             fill_lsub=fill_lsub,
+            max_supernode=max_supernode,
+            rowblk=rowblk,
+            colblk=colblk,
         )
 
         setup_seconds = ctypes.c_double()

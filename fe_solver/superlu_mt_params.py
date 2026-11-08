@@ -38,7 +38,16 @@ DEFAULTS: dict[str, float | int] = {
     "fill_lusup": 0,
     "fill_ucol": 0,
     "fill_lsub": 0,
+    "max_supernode": -1,
+    "rowblk": -1,
+    "colblk": -1,
 }
+
+#: Blocking parameters served by the bridge's own sp_ienv() override.  They
+#: trade dense-kernel efficiency against cache residency and thread
+#: granularity, are coupled to one another, and should be tuned together
+#: against measured factorization time.  -1 keeps the library default.
+BLOCKING_PARAMS = ("max_supernode", "rowblk", "colblk")
 
 #: The factor-storage estimates share sp_ienv(6/7/8) semantics: negative is a
 #: fill-growth factor on nnz(A), positive is an absolute entry count, and the
@@ -60,6 +69,9 @@ _DESCRIPTIONS: dict[str, str] = {
     "fill_lusup": "L supernode value storage; <0 factor on nnz(A), >0 entries, 0 = sp_ienv(6)",
     "fill_ucol": "U column storage; <0 factor on nnz(A), >0 entries, 0 = sp_ienv(7)",
     "fill_lsub": "L subscript storage; <0 factor on nnz(A), >0 entries, 0 = sp_ienv(8)",
+    "max_supernode": "max columns per supernode; -1 = SuperLU_MT sp_ienv(3)",
+    "rowblk": "2-D blocking row minimum; -1 = SuperLU_MT sp_ienv(4)",
+    "colblk": "2-D blocking column minimum; -1 = SuperLU_MT sp_ienv(5)",
 }
 
 
@@ -85,6 +97,10 @@ def _validate(name: str, value: object) -> float | int:
     if name == "relax" and value < -1:
         raise ModelError(
             f"superlu_mt.{name} must be -1 (library default) or at least 0, got {value}"
+        )
+    if name in BLOCKING_PARAMS and not (value == -1 or value >= 1):
+        raise ModelError(
+            f"superlu_mt.{name} must be -1 (library default) or at least 1, got {value}"
         )
     if name in FILL_PARAMS and abs(value) > _INT32_MAX:
         raise ModelError(
@@ -116,6 +132,9 @@ class SuperLUMTParams:
     fill_lusup: int = DEFAULTS["fill_lusup"]
     fill_ucol: int = DEFAULTS["fill_ucol"]
     fill_lsub: int = DEFAULTS["fill_lsub"]
+    max_supernode: int = DEFAULTS["max_supernode"]
+    rowblk: int = DEFAULTS["rowblk"]
+    colblk: int = DEFAULTS["colblk"]
     #: Parameter name -> "default", "file" or "deck".
     sources: dict[str, str] = field(
         default_factory=lambda: {name: "default" for name in DEFAULTS}

@@ -118,6 +118,14 @@ class StrictValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ModelError, "must be a number, got a boolean"):
             resolve_params({"panel_size": True})
 
+    def test_blocking_parameters_reject_zero_and_below_minus_one(self) -> None:
+        for name in ("max_supernode", "rowblk", "colblk"):
+            with self.assertRaisesRegex(ModelError, f"{name} must be -1"):
+                resolve_params({name: 0})
+            with self.assertRaisesRegex(ModelError, f"{name} must be -1"):
+                resolve_params({name: -2})
+            self.assertEqual(getattr(resolve_params({name: 64}), name), 64)
+
     def test_fill_parameters_accept_both_semantics_but_not_overflow(self) -> None:
         params = resolve_params(
             {"fill_lusup": -100, "fill_ucol": 5_000_000, "fill_lsub": 0}
@@ -140,7 +148,10 @@ class VisibilityTests(unittest.TestCase):
         banner = "\n".join(
             format_override_banner(resolve_params({"panel_size": 12}))
         )
-        self.assertIn("EXPERT SuperLU_MT OVERRIDES ACTIVE (1 of 6 parameters)", banner)
+        self.assertIn(
+            f"EXPERT SuperLU_MT OVERRIDES ACTIVE (1 of {len(DEFAULTS)} parameters)",
+            banner,
+        )
         self.assertIn("panel_size = 12  <-- OVERRIDDEN by deck (default -1)", banner)
         self.assertIn("diag_pivot_thresh = 1.0 (default)", banner)
 
@@ -272,6 +283,73 @@ class ForwardingTests(unittest.TestCase):
             diag["total_needed_bytes"], diag["lu_storage_bytes"]
         )
         self.assertGreaterEqual(diag["expansions"], 0.0)
+
+    @unittest.skipUnless(
+        SUPERLU_MT_LIBRARY.is_file(), "SuperLU_MT bridge has not been built"
+    )
+    def test_bridge_sp_ienv_override_matches_upstream_defaults(self) -> None:
+        """The bridge replaces sp_ienv(), so its fallbacks must track upstream.
+
+        These are the generic (non-MACH) values in upstream SRC/sp_ienv.c. If
+        upstream changes them, or the build starts defining MACH, this fails
+        and the override in native/superlu_mt.c must be revisited.
+        """
+        import ctypes
+
+        from native.superlu_mt_backend import load_superlu_mt
+
+        lib = load_superlu_mt(SUPERLU_MT_LIBRARY)
+        lib.slumt_sp_ienv_defaults.restype = ctypes.c_int
+        lib.slumt_sp_ienv_defaults.argtypes = [ctypes.c_int]
+        upstream = {1: 20, 2: 6, 3: 200, 4: 200, 5: 100, 6: -50, 7: -50, 8: -30}
+        for ispec, expected in upstream.items():
+            self.assertEqual(lib.slumt_sp_ienv_defaults(ispec), expected, f"sp_ienv({ispec})")
+
+    @unittest.skipUnless(
+        SUPERLU_MT_LIBRARY.is_file(), "SuperLU_MT bridge has not been built"
+    )
+    def test_library_internals_resolve_to_the_bridge_sp_ienv(self) -> None:
+        """Proves the link-time override actually reaches SuperLU_MT's internals."""
+        import ctypes
+
+        from fe_solver.linear_solver import close_factor
+        from native.superlu_mt_backend import load_superlu_mt
+
+        lib = load_superlu_mt(SUPERLU_MT_LIBRARY)
+        lib.slumt_sp_ienv_call_count.restype = ctypes.c_long
+        before = lib.slumt_sp_ienv_call_count()
+        K = sparse.csr_matrix([[3.0, 2.0, 0.0], [-1.0, 4.0, 1.0], [0.0, 2.0, 2.0]])
+        C = sparse.csr_matrix([[1.0, 0.0, -1.0]])
+        close_factor(factor_kkt(K, C, "COLAMD", LinearSolverConfig("superlu_mt", 1)))
+        # The bridge itself calls sp_ienv at most twice (panel_size, relax);
+        # anything beyond that came from inside the library.
+        self.assertGreater(lib.slumt_sp_ienv_call_count() - before, 2)
+
+    @unittest.skipUnless(
+        SUPERLU_MT_LIBRARY.is_file(), "SuperLU_MT bridge has not been built"
+    )
+    def test_blocking_overrides_do_not_change_the_solution(self) -> None:
+        import numpy as np
+
+        from fe_solver.linear_solver import close_factor, solve_factor
+
+        K = sparse.csr_matrix([[3.0, 2.0, 0.0], [-1.0, 4.0, 1.0], [0.0, 2.0, 2.0]])
+        C = sparse.csr_matrix([[1.0, 0.0, -1.0]])
+        rhs = np.array([1.0, -2.0, 0.5, 0.3])
+        expected = factor_kkt(K, C, "COLAMD").solve(rhs)
+        for blocking in (
+            {"max_supernode": 1},
+            {"max_supernode": 4, "rowblk": 8, "colblk": 4},
+            {"rowblk": 1000, "colblk": 1000},
+        ):
+            config = LinearSolverConfig("superlu_mt", 1, resolve_params(blocking))
+            factor = factor_kkt(K, C, "COLAMD", config)
+            try:
+                np.testing.assert_allclose(
+                    solve_factor(factor, rhs, config), expected, rtol=1e-9, atol=1e-11
+                )
+            finally:
+                close_factor(factor)
 
     def test_parameters_are_rejected_for_other_backends(self) -> None:
         with self.assertRaisesRegex(ModelError, "only with the superlu_mt backend"):

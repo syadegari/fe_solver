@@ -164,6 +164,25 @@ Deviations are made hard to miss:
 `num_threads` is deliberately not configurable in any file. The thread count belongs to whoever runs the experiment,
 not to whoever prepares the deck, so it stays on the command line.
 
+The blocking parameters `max_supernode`, `rowblk` and `colblk` (`sp_ienv(3/4/5)`) are exposed through the same
+mechanism. SuperLU_MT reads them through `sp_ienv()`, which takes no context argument, so the bridge supplies its own
+`sp_ienv()` definition — the same technique upstream uses in `EXAMPLE/` and `TESTING/`. Its fallback values replicate
+the generic branch of `SRC/sp_ienv.c` exactly, and a test asserts they still agree. Because `sp_ienv()` has no
+per-call context, the overrides are process-global: the bridge sets them before `pdgstrf()` and does not change them
+while it runs, which is safe for one factorization at a time but not for concurrent factorizations in one process.
+
+These three are coupled and affect speed, not correctness: `max_supernode` sets how wide a dense update becomes, and
+`rowblk`/`colblk` set how that update is tiled across cache and threads. Tune them together against measured
+factorization time rather than individually, using `native/benchmark_superlu_mt_blocking.py`:
+
+```bash
+python native/benchmark_superlu_mt_blocking.py native/kkt_debug_2.h5 "t_n=0.02/iteration=1" \
+  --threads 1 4 8 --repeats 5 --mode scan
+```
+
+That script enforces the project's testing core budget: it refuses thread counts above `--max-threads` (default 8)
+unless `--allow-full-machine` is passed, which is reserved for user-launched full-machine measurements.
+
 ### PETSc LGMRES (development branch)
 
 PETSc LGMRES is a third selectable backend on `feature/iterative-solvers`; both direct backends remain available. The commands in this subsection require that development branch, not `main`.

@@ -76,3 +76,19 @@
 
 # L supernode row subscripts; sp_ienv(8), default growth factor -30.
 # fill_lsub = -60
+
+# Blocking parameters (see docs/SUPERLU_MT_INTERNALS.md).  These trade dense
+# kernel efficiency against cache residency and thread granularity, and they
+# are COUPLED: max_supernode sets how wide a dense update becomes, rowblk and
+# colblk set how that update is tiled.  Tune them together against measured
+# factorization time with native/benchmark_superlu_mt_blocking.py; do not
+# guess.  -1 keeps the library default.
+
+# Maximum columns per supernode; sp_ienv(3), library default 200.
+# max_supernode = 200
+
+# 2-D blocking row minimum; sp_ienv(4), library default 200.
+# rowblk = 200
+
+# 2-D blocking column minimum; sp_ienv(5), library default 100.
+# colblk = 100

@@ -190,7 +190,35 @@ cooperate on one large supernode-panel update and the tiles are sized to cache.
 `maxsuper`, `rowblk` and `colblk` are therefore coupled — a reason to tune them
 as one experiment, not three knobs (the planned Phase 2).
 
-## 5. When the storage guess is wrong
+## 5. How the blocking parameters are exposed
+
+`relax`, `panel_size` and the `fill_*` estimates all reach the library through
+`superlumt_options_t`. `maxsuper`, `rowblk` and `colblk` do not: they are read
+through `sp_ienv()`, which takes no context argument, so there is no per-call
+way to set them.
+
+The bridge therefore supplies its own `sp_ienv()` definition
+(`native/superlu_mt.c`). This is upstream's own pattern — `EXAMPLE/sp_ienv.c`
+and `TESTING/sp_ienv.c` both replace the `SRC/` one — and it needs no change
+to upstream. Because SuperLU_MT is linked as a static archive and
+`sp_ienv.o` defines no other symbol, the linker resolves every internal
+reference to the bridge's definition and never pulls in the upstream object.
+
+Two consequences worth knowing:
+
+- **The fallback values are a copy.** When no override is set, the bridge's
+  `sp_ienv()` returns the generic (non-`MACH`) values from upstream
+  `SRC/sp_ienv.c`: `20, 6, 200, 200, 100, -50, -50, -30`. A test asserts they
+  still match, so an upstream change or a build that starts defining `MACH`
+  surfaces as a failure rather than as silent drift.
+- **The overrides are process-global.** `sp_ienv()` has no context, so the
+  values live in file-scope variables that `slumt_factor()` sets before
+  `pdgstrf()` and leaves alone while it runs. That is safe for one
+  factorization at a time, which is how the FE solver uses the backend, but
+  concurrent factorizations in a single process would race and are not
+  supported.
+
+## 6. When the storage guess is wrong
 
 If the factors outgrow the allocated arrays mid-factorization, the expansion
 path (`SRC/pmemory.c`, `XPAND_HINT`) prints
@@ -206,7 +234,7 @@ upstream in commit `a05e0a0`). A user who raises a fill factor and still hits
 the abort should check stderr for that halving message: the request may never
 have been granted.
 
-## 6. One-paragraph summary
+## 7. One-paragraph summary
 
 The etree orders elimination; fill-in flows up it; supernodes are the dense
 blocks that fill-in creates along its branches — padded into existence at the
