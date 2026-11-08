@@ -395,7 +395,6 @@ def run_analysis(
     debug_timing: bool = False,
     solver_backend: str | None = None,
     num_threads: int | None = None,
-    superlu_mt_params_file: str | Path | None = None,
 ) -> AnalysisResult:
     analysis_wall_start = perf_counter_ns()
     prepared = deck_or_path if isinstance(deck_or_path, PreparedAnalysis) else prepare_analysis(deck_or_path)
@@ -407,12 +406,11 @@ def run_analysis(
     backend = solver_backend or str(linear_solver_table["backend"])
     superlu_mt_params = None
     if backend == "superlu_mt":
-        # The command line wins over the deck so the person running the
-        # experiment can always redirect the expert knobs without editing a deck.
-        params_file = superlu_mt_params_file or linear_solver_table.get(
-            "superlu_mt_params_file"
-        )
-        if params_file is not None and superlu_mt_params_file is None:
+        # Expert parameters are deck-owned by design: either an inline
+        # [linear_solver.superlu_mt] table or a params file the deck points at.
+        # There is deliberately no command-line path to them.
+        params_file = linear_solver_table.get("superlu_mt_params_file")
+        if params_file is not None:
             params_file = deck.resolve(str(params_file))
         superlu_mt_params = resolve_params(
             linear_solver_table.get(SUPERLU_MT_PARAMS_TABLE), params_file

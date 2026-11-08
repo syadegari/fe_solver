@@ -1,18 +1,14 @@
 # Expert-level SuperLU_MT factorization parameters -- TEMPLATE, NOT LOADED BY DEFAULT
 #
 # This file does nothing on its own.  Placing it here, or editing it, changes no
-# run.  It is read only when a run names it explicitly:
-#
-#     fe-solver solve deck.toml --solver-backend superlu_mt --num-threads 8 \
-#         --superlu-mt-params native/superlu_mt_params.toml
-#
-# or when a deck opts in:
+# run.  It is read only when a deck opts in:
 #
 #     [linear_solver]
 #     superlu_mt_params_file = "../native/superlu_mt_params.toml"   # relative to the deck
 #
-# The command-line flag wins over the deck key.  A deck may also set the same
-# parameters inline, and those win over this file:
+# There is deliberately no command-line path to these parameters: they are
+# expert-level and deck-owned.  A deck may also set the same parameters inline,
+# and those win over this file:
 #
 #     [linear_solver.superlu_mt]
 #     diag_pivot_thresh = 0.1

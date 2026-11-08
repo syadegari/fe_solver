@@ -164,9 +164,9 @@ slumt_report_abort_during_factorization(void)
         "[fe-solver] estimate for the array it names:\n"
         "[fe-solver]   L supernodes -> fill_lusup, U columns -> fill_ucol,\n"
         "[fe-solver]   L subscripts -> fill_lsub\n"
-        "[fe-solver] e.g. put 'fill_lusup = -100' under [superlu_mt] in a file\n"
-        "[fe-solver] passed as --superlu-mt-params, or under\n"
-        "[fe-solver] [linear_solver.superlu_mt] in the deck.\n"
+        "[fe-solver] e.g. put 'fill_lusup = -100' under [linear_solver.superlu_mt]\n"
+        "[fe-solver] in the deck, or under [superlu_mt] in a parameter file named\n"
+        "[fe-solver] by the deck's linear_solver.superlu_mt_params_file.\n"
         "[fe-solver] See docs/SUPERLU_MT_FACTOR_STORAGE.md\n"
     );
     fflush(stderr);

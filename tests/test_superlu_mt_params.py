@@ -363,6 +363,24 @@ class DeckIntegrationTests(unittest.TestCase):
         data["linear_solver"].update(linear_solver)
         return Deck(deck.path, data, deck.curves)
 
+    @unittest.skipUnless(
+        SUPERLU_MT_LIBRARY.is_file(), "SuperLU_MT bridge has not been built"
+    )
+    def test_deck_named_params_file_is_the_only_file_path(self) -> None:
+        """The deck key is the sole route to a parameter file (no CLI flag)."""
+        path = write_params("[superlu_mt]\nrelax = 6\n")
+        try:
+            deck = self.deck_with(
+                {"backend": "superlu_mt", "superlu_mt_params_file": str(path)}
+            )
+            result = run_analysis(prepare_analysis(deck), stop_time=0.05, num_threads=2)
+        finally:
+            path.unlink()
+        recorded = result.analysis["linear_system"]["options"]["superlu_mt"]
+        self.assertEqual(recorded["values"]["relax"], 6)
+        self.assertEqual(recorded["sources"]["relax"], "file")
+        self.assertEqual(recorded["params_file"], str(path.resolve()))
+
     def test_parameters_in_a_deck_are_rejected_for_other_backends(self) -> None:
         deck = self.deck_with({"backend": "scipy_splu", "superlu_mt": {"relax": 6}})
         with self.assertRaisesRegex(ModelError, r"apply only to superlu_mt"):

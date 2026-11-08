@@ -141,13 +141,14 @@ processes, or a smaller problem — not a larger parameter.
 ## 7. How to set them
 
 These are expert-level parameters: they are opt-in, and every change is
-announced at startup. Full contract and precedence rules are in
-[RUNNING.md](RUNNING.md); in brief, either point a run at a parameter file:
+announced at startup. There is no command-line path to them; they belong to
+the deck. Full contract and precedence rules are in [RUNNING.md](RUNNING.md);
+in brief, either have the deck point at a parameter file:
 
-```bash
-python -m fe_solver examples/case_a_hex8.toml \
-  --solver-backend superlu_mt --num-threads 8 \
-  --superlu-mt-params native/superlu_mt_params.toml
+```toml
+# in the deck
+[linear_solver]
+superlu_mt_params_file = "../native/superlu_mt_params.toml"   # relative to the deck
 ```
 
 ```toml

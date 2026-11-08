@@ -131,17 +131,12 @@ built-in defaults  <-  expert parameter file  <-  deck [linear_solver.superlu_mt
 The defaults live in `fe_solver/superlu_mt_params.py` (`DEFAULTS`) and, for the `-1` sentinels of `panel_size` and
 `relax`, in SuperLU_MT's own `sp_ienv()`. They are deliberately not duplicated into any TOML file.
 
-An expert parameter file is read only when a run names it. `native/superlu_mt_params.toml` is a commented template
-whose keys are all commented out; its mere presence changes nothing.
+An expert parameter file is read only when the deck names it. `native/superlu_mt_params.toml` is a commented template
+whose keys are all commented out; its mere presence changes nothing. There is deliberately no command-line path to
+these parameters: they are expert-level and belong to the deck, so they never show up in `--help`.
 
-```bash
-python -m fe_solver examples/case_a_hex8.toml \
-  --solver-backend superlu_mt --num-threads 8 \
-  --superlu-mt-params native/superlu_mt_params.toml
-```
-
-A deck may instead point at a file, with the path taken relative to the deck, and may pin parameters inline. The
-command-line flag wins over the deck key, and inline deck parameters win over the file:
+A deck points at a file, with the path taken relative to the deck, and may pin parameters inline; inline deck
+parameters win over the file:
 
 ```toml
 [linear_solver]
