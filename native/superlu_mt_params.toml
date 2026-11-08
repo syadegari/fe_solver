@@ -33,6 +33,13 @@
 # Unknown keys are a hard error, not a warning -- a typo cannot silently degrade
 # into a default.
 #
+# Restoring this template: the defaults never live in this file (all keys ship
+# commented out), so "restoring defaults" just means restoring the pristine
+# template.  Use git:
+#     git restore native/superlu_mt_params.toml              # discard edits
+#     git show HEAD:native/superlu_mt_params.toml            # view pristine copy
+# There is deliberately no solver command for this.
+#
 # Note: num_threads is deliberately NOT configurable here or in any deck.  The
 # thread count belongs to whoever runs the experiment, so it stays on the solver
 # command line (--num-threads) and nowhere else.

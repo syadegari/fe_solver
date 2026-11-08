@@ -123,6 +123,47 @@ All racing locations are inside the L-factor value and subscript arrays
 allocated by `pdgstrf_MemInit` / `pdgstrf_expand` at the start of the
 factorization.
 
+## The rate depends on machine state (2026-11-08)
+
+Two user-launched runs on this host while it was **otherwise idle** produced
+zero wrong solves in 5,000 repetitions at both 8 and 16 threads (OpenBLAS,
+default CMake build type). At the recorded 16-thread rate of 6-15 per 5,000,
+two clean runs are decisively inconsistent with chance; the 8-thread clean run
+(recorded rate 2 per 5,000) is suggestive but not conclusive on its own.
+
+The same day, with unrelated processes keeping the load average near 6, the
+reproducer failed at 8 threads in every build configuration tried:
+
+| build | BLAS | 8-thread wrong of 5,000 |
+| --- | --- | ---: |
+| `Release` (`-O3`) | bundled CBLAS | 5 |
+| `Release` (`-O3`) | OpenBLAS 0.3.x | 3 |
+| default (`-O0`) | OpenBLAS 0.3.x | 4 |
+
+This eliminates the BLAS implementation and the optimization level as the
+explanation and leaves machine load as the distinguishing variable: external
+preemption appears to be needed to open the race window, whereas on an idle
+machine the threads apparently interleave too regularly to hit it. Note this
+refines, rather than contradicts, the earlier observation that
+*self*-oversubscription and concurrent reproducer instances did not raise the
+rate — those measurements were taken on an already-busy machine.
+
+Consequences:
+
+- The race is real and still present in `v4.1.0`; the defect report stands.
+- The recorded rates should be read as "under typical multi-process load", not
+  as machine-independent constants. An idle machine may show none at all, so a
+  clean reproducer run is not evidence of a fix unless taken under load.
+- `run_load_dependence.sh` measures both conditions side by side (idle, then
+  with synthetic busy-loop workers). It uses the full machine and is meant to
+  be launched by the user on an otherwise idle host.
+
+Separately, structural nondeterminism was observed below the wrong-solve
+threshold: repeated 2-thread factorizations of one matrix returned differing
+`nnz(L)` while every solution remained accurate, so scheduling-dependent
+supernode formation already occurs at thread counts where no wrong solve has
+ever been seen.
+
 ## Environment
 
 AMD Ryzen 9 5950X (16 cores, 32 threads), Ubuntu 24.04.5, Linux 6.8.0, GCC

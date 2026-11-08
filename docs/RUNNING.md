@@ -98,7 +98,9 @@ recorded in `run_log.json`.
 
 Known issue: with four or more solver threads, SuperLU_MT occasionally returns a wrong solution for a small KKT
 system while reporting success, at a rate of roughly one to two in a thousand factorizations at 16 threads, measured
-on a 561-unknown and on a 17,193-unknown system alike.  The Newton loop detects the bad direction through its
+on a 561-unknown and on a 17,193-unknown system alike. The rate depends on machine state: it was measured under
+typical multi-process load, and an otherwise idle machine produced no wrong solve in 5,000 repetitions at 8 and 16
+threads, so a clean reproducer run on an idle host is not evidence of a fix (see the reproducer README).  The Newton loop detects the bad direction through its
 residual and line-search checks and recovers, usually at the cost of one extra iteration and occasionally a step
 cutback, so the converged response is unaffected within the convergence tolerances.  Convergence is always judged on
 residuals recomputed from the trial state, never on the solver output, so a wrong solve cannot enter the results;
