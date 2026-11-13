@@ -234,7 +234,79 @@ upstream in commit `a05e0a0`). A user who raises a fill factor and still hits
 the abort should check stderr for that halving message: the request may never
 have been granted.
 
-## 7. One-paragraph summary
+## 7. `refact`: the reuse that is not symbolic reuse
+
+`superlumt_options_t` has a `refact` flag, and `pdgstrf_init()` takes it as an
+argument. Read in isolation it looks like the classic direct-solver
+optimization: our mesh topology does not change between Newton iterations, the
+KKT pattern is therefore fixed, and a solver that can keep its symbolic
+analysis alive should skip most of the repeated work. The bridge nevertheless
+passes `NO`, and a study in November 2026 concluded it should stay that way.
+
+**What the name does not mean.** SuperLU is a *left-looking* factorization: it
+discovers the structure of each column while it computes that column's values,
+because the structure depends on the pivots just chosen. The column DFS, the
+pruning and the supernode detection therefore live inside `pdgstrf()` —
+`SRC/pdgstrf_column_dfs.c`, `SRC/pdgstrf_panel_dfs.c`,
+`SRC/pxgstrf_super_bnd_dfs.c` — and not one of them reads `refact`. Setting
+`refact = YES` does not skip the symbolic factorization, because there is no
+separate symbolic factorization to skip. Solvers that do offer this (MUMPS,
+PARDISO, SuperLU_DIST's `SamePattern_SameRowPerm`) split analysis from numeric
+factorization up front; SuperLU_MT does not.
+
+What `refact = YES` actually skips is narrower:
+
+| skipped work | where | measured cost |
+|---|---|---|
+| column etree, its postorder, column counts | `sp_colorder.c:107` | 0.03-0.18% of a factorization |
+| re-allocating the `L`/`U` arrays | `pdmemory.c:373` | 0-2%, not resolvable above the noise |
+
+The column ordering itself (`get_perm_c`, which chooses `perm_c` before any of
+this) is *not* part of it. That call happens before `pdgstrf_init()` and can be
+cached by the caller with `refact` left at `NO`. It is also the larger of the
+two: 0.08 s on a `17k` KKT system, against 0.007 s for the etree.
+
+**What the study measured.** A standalone probe factored a real KKT snapshot,
+replaced the values with a +-1% perturbation of themselves at fixed pattern,
+and factored again either fully or with `refact = YES`, interleaving the two
+so machine drift could not favor either. Across 1-16 threads and two problem
+sizes the total saving was 0.4-3.8%, and the part attributable to `refact`
+rather than to ordering reuse was 0-2%. It did not grow with problem size: on
+the `52k` system at 8 threads — the most precisely resolved point, noise 0.7% —
+the `refact`-only part was `-0.1%`, i.e. nothing. Full numbers, raw data and a
+reproduction recipe:
+[../verification/superlu_mt_results/refact_study/](../verification/superlu_mt_results/refact_study/).
+
+**Why the small gain is not worth taking.** Two properties of the `refact`
+path turn a few percent into a liability:
+
+- **The storage is frozen.** Under `refact = YES` the factor arrays are reused
+  *at the size the first factorization allocated* (`pdmemory.c:373` reads
+  `nzlmax`/`nzumax`/`nzlumax` from the previous run and the `fill_*` knobs are
+  ignored). But the required size moves between factorizations: a +-1% change
+  in the values shifted `nnz(U)` by 342k entries on the `52k` system, and that
+  system already needs 94% of a `fill_ucol = -80` budget. A later Newton
+  iteration that needs slightly more than the first one does not get a bigger
+  array and does not get an error either — it takes the section 6 path and
+  calls `exit(-1)`.
+- **The bookkeeping is process-global.** The sizes live in a file-scope
+  `static GlobalLU_t Glu` (`pdgstrf_thread_init.c:75`), so a refactorization
+  reads whatever the *last* factorization in the process left there, not its
+  own. With more than one live factor handle the reused sizes belong to the
+  wrong matrix. Supporting it safely would mean an ownership guard in the
+  bridge on top of a pattern check and a headroom check.
+
+So the trade is 0-2% against an unrecoverable abort, process-wide hidden state,
+and three new invariants to keep true. The knob is not exposed, and
+`slumt_factor()` keeps `refact = NO` and `usepr = NO`.
+
+**If factorization time is the problem**, the levers that measured larger than
+this one: factor less often (modified Newton, or refreshing the tangent every
+`k` iterations) and thread placement — 8 threads spread across both CCDs of a
+5950X beat 8 threads pinned to a single CCD by 26% on the same matrix, an order
+of magnitude more than `refact` offered.
+
+## 8. One-paragraph summary
 
 The etree orders elimination; fill-in flows up it; supernodes are the dense
 blocks that fill-in creates along its branches — padded into existence at the

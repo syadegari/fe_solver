@@ -96,6 +96,18 @@ A practical procedure:
    already exceeded, and go comfortably above it.
 4. **Check stderr if raising the value does not help.** See section 6.
 
+A worked example, from the storage sweep in
+[../verification/superlu_mt_results/refact_study/](../verification/superlu_mt_results/refact_study/):
+a `52,281 x 52,281` KKT system with 3,522,771 stored entries (the snapshot in
+`native/kkt_debug_2.h5`) aborts on `fill_ucol` at the default `-50`, and again
+at `-60` and `-70`. It completes at `-80`, where `U` occupies 264.4M of the
+281.8M reserved entries. Each failed attempt reached a later column and
+reported a larger floor — 176.1M, 211.4M, then 246.6M — which is step 3 above
+in action: the floor in the message trails the true requirement, so stepping up
+one notch at a time costs a run per notch. The same directory holds the probe
+and scripts used, if you want to measure a problem family's real growth before
+a long job rather than after a crash.
+
 The solver reports your matrix's stored-entry count on the `linear system:`
 line of every run, so you can compute what a given growth factor will reserve.
 

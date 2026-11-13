@@ -291,11 +291,21 @@ slumt_factor(
 
 
     /*
-    * TODO(symbolic-reuse):
-    * Keep refact=NO and usepr=NO until the FE backend explicitly owns
-    * and validates symbolic-factorization reuse. Reuse is only valid
-    * while the sparsity pattern and the required permutation/symbolic
-    * state remain compatible.
+    * refact=NO and usepr=NO are deliberate and settled; this is not a TODO.
+    *
+    * refact=YES does not skip the symbolic factorization -- SuperLU is
+    * left-looking, so the column DFS and supernode detection run inside
+    * pdgstrf() on every call and never read the flag. It only skips the
+    * etree/column counts and the reuse of the previous factor allocation,
+    * measured at 0-2% of a factorization and ~0% on the larger of the two
+    * test systems. In exchange the factor storage would be frozen at the
+    * first factorization's size (a later Newton iteration needing more
+    * exits the process, see docs/SUPERLU_MT_FACTOR_STORAGE.md) and the
+    * reused sizes come from a process-global static in the library, so
+    * they belong to whichever handle factored last.
+    *
+    * docs/SUPERLU_MT_INTERNALS.md section 7 and
+    * verification/superlu_mt_results/refact_study/ have the measurements.
     */
     StatAlloc(
         (int_t)n,
