@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 examples/results/
+verification/patch_tests/*/results/
 *.egg-info/
 .pytest_cache/
 notes.org

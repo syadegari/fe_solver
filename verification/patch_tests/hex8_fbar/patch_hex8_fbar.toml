@@ -1,0 +1,76 @@
+[analysis]
+name = "patch_hex8_fbar"
+t_start = 0.0
+t_end = 1.0
+
+[mesh]
+file = "patch_cube_hex8.msh"
+format = "gmsh_msh41"
+
+[time]
+dt_initial = 0.25
+dt_min = 1.0e-5
+dt_max = 0.25
+cutback_factor = 0.5
+growth_factor = 1.25
+grow_if_newton_iterations_le = 4
+max_attempts_per_increment = 8
+
+# Far tighter than production decks, so the measured error reports the
+# element's accuracy rather than the Newton stopping rule.
+[nonlinear]
+method = "newton"
+max_iterations = 12
+force_rtol = 1.0e-12
+force_atol = 1.0e-14
+constraint_rtol = 1.0e-14
+constraint_atol = 1.0e-14
+
+[linear_solver]
+backend = "scipy_splu"
+ordering = "COLAMD"
+singular_policy = "diagnose_and_abort"
+
+[[materials]]
+name = "patch"
+model = "neo_hook"
+[materials.properties]
+mu = 1.0
+kappa = 20.0
+
+[[element_assignments]]
+region = "solid"
+formulation = "hex8_fbar"
+material = "patch"
+
+[output]
+directory = "results"
+database = "run.h5"
+history_file = "run_log.json"
+interval = 0.25
+explicit_times = [1.0]
+
+[restart]
+enabled = false
+keep_last = 0
+restart_from = ""
+
+[[curves]]
+name = "ramp"
+points = [[0.0, 0.0], [1.0, 1.0]]
+
+[[constraints.affine]]
+name = "patch_boundary"
+regions = ["xmin", "xmax", "ymin", "ymax", "zmin", "zmax"]
+origin = [0.0, 0.0, 0.0]
+macro_F = [
+  [{constant = 1.0, curve = "ramp", scale = 0.19999999999999996}, {constant = 0.0, curve = "ramp", scale = 0.15}, {constant = 0.0, curve = "ramp", scale = -0.08}],
+  [{constant = 0.0, curve = "ramp", scale = 0.05}, {constant = 1.0, curve = "ramp", scale = -0.07999999999999996}, {constant = 0.0, curve = "ramp", scale = 0.1}],
+  [{constant = 0.0, curve = "ramp", scale = -0.04}, {constant = 0.0, curve = "ramp", scale = 0.07}, {constant = 1.0, curve = "ramp", scale = 0.06000000000000005}]
+]
+
+[verification]
+require_positive_J = true
+check_global_force_balance = true
+affine_deformation = true
+affine_tolerance = 1.0e-12

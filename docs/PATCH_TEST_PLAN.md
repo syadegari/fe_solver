@@ -189,18 +189,33 @@ the final test:
 
 No permanent mutation test is committed.
 
-## 5. Mesh and deck construction: in-memory, no new files
+## 5. Two tiers: frozen simulation cases and the regression suite
 
-`run_analysis` accepts a `PreparedAnalysis`, so the end-to-end test does not
-need a `.msh` file: the test builds the `Mesh` dataclass directly (~80 lines,
-readable in one sitting), writes its deck as a TOML string loaded through
-`load_deck` (full deck validation), and assembles
-`PreparedAnalysis(deck, mesh, build_model(...), build_constraints(...),
-mandatory_events(...))`. This was chosen over a Gmsh generator + committed
-mesh as the smallest-surface-area option. Costs accepted: `read_gmsh` is not
-exercised here (it is exercised by every mesh-based test already), and no new
-`examples/` decks or acceptance registrations are added — the patch test is
-mathematical verification and lives in the unit suite, per spec §22.
+(Revised in review, 2026-11-19; supersedes the original in-memory-only
+construction.) Patch tests are code verification first and software tests
+second: an engineer must be able to inspect the exact inputs fed to the
+solver, run a case as an ordinary simulation, and view the results. Each case
+is therefore a frozen, self-contained directory under
+`verification/patch_tests/<case>/` holding its committed mesh and deck,
+runnable with `python -m fe_solver solve`; the deck's `[verification]` table
+performs the affine-reproduction check during the run itself, `verify.py`
+prints the full evidence table, and ParaView provides the visualization (an
+exploded Warp-then-Shrink view; recipe in the README there).
+
+The regression tier, `tests/test_patch.py`, shares the construction module
+(`verification/patch_tests/patch_cube.py`), keeps the assertion role in the
+always-on suite, and adds the variants that need no frozen deck: consistency
+at the exact field (free of any Newton tolerance), rigid rotation, yielded J2,
+the near-incompressible F-bar run, the rank test, and the self-guards. Its
+`FrozenInputTests` pins the committed files to the generator, so any change to
+a frozen input is traceable through version control.
+
+The generator, `generate_patch_cases.py`, is housekeeping — not part of
+running the tests. It writes the mesh through the Gmsh API with the full
+point/curve/surface/volume node classification and round-trips the result
+through `read_gmsh`, asserting it matches the in-memory construction; this
+also closes the earlier caveat that the production mesh reader was not
+exercised by the patch tests.
 
 ## 6. Deferred: force/traction patch test (PT-3)
 
@@ -223,12 +238,22 @@ Its unique value over PT-1a/1b: it detects over-constraint and spurious modes
 under minimal supports. The rank test (RT) covers the spurious-mode half at
 much lower cost, which is why PT-3 is not in this work item.
 
-## 7. Execution
+## 7. Running
 
-- Run in the `py3.14` conda environment; submit through `rmgr`
-  (`rmgr submit ... -- conda run -n py3.14 python -m unittest tests.test_patch -v`).
-- Resource needs are trivial: ≤ 2 cores, well inside the AGENTS.md budget;
-  wall time seconds.
+As simulations, from the frozen cases (see
+[../verification/patch_tests/README.md](../verification/patch_tests/README.md)
+for verification and visualization):
+
+```bash
+python -m fe_solver solve verification/patch_tests/hex8/patch_hex8.toml
+python -m verification.patch_tests.verify
+```
+
+As the regression suite:
+
+```bash
+python -m unittest tests.test_patch -v
+```
 
 ## 8. Completion checklist
 
@@ -240,6 +265,13 @@ much lower cost, which is why PT-3 is not in this work item.
 - [x] README: tick the patch-test item; add a Verification-table row.
 - [x] Spec §22.1: add the patch test to the required verification list.
 - [x] Measured tolerances recorded in the verification note.
+- [x] Frozen simulation cases under `verification/patch_tests/` (per-case
+      directory with committed mesh + deck, evidence runner, generator with
+      round-trip check, traceability guard in the regression suite).
+- [x] Exploded-view visualization via the ParaView recipe in the cases README.
+      (A static matplotlib renderer was tried and removed in review: the
+      reference and deformed panels looked too alike, and a fixed viewpoint is
+      inadequate for a 3D patch next to ParaView's rotatable view.)
 
 Follow-on raised by this work, tracked separately in the README: dead
 surface-traction loads (Section 6), whose verification would include a stress

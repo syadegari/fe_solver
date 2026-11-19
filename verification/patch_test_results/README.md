@@ -121,10 +121,15 @@ with the no-symmetry invariant.
 
 ## 5. Reproducing
 
+The frozen simulation cases live in
+[../patch_tests/](../patch_tests/README.md); run one as an ordinary
+simulation, or regenerate every number in Section 1 with the evidence runner:
+
 ```bash
-conda run -n py3.14 python -m unittest tests.test_patch -v
+python -m fe_solver solve verification/patch_tests/hex8/patch_hex8.toml
+python -m verification.patch_tests.verify
 ```
 
-Nine tests, about two seconds. The teeth check is a one-off experiment, not a
-committed mutation test; its script is reproduced from the table above by
-patching the named helpers.
+The regression counterpart is `python -m unittest tests.test_patch -v`. The
+teeth check is a one-off experiment, not a committed mutation test; its script
+is reproduced from the table above by patching the named helpers.
