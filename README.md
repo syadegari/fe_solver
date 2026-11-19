@@ -180,6 +180,7 @@ SciPy/SuperLU and SuperLU_MT are integrated; modified Newton reuses its factoriz
 * [x] Reuse factorizations within modified-Newton increments.
 * [x] Update the SuperLU_MT bridge to a selected upstream revision.
 * [x] Expose SuperLU_MT diagnostics and storage/blocking tuning through a separate TOML file.
+* [x] Measure SuperLU_MT symbolic reuse (`refact=YES`) and record why it is not exposed as a knob.
 
 </details>
 
@@ -191,7 +192,7 @@ SciPy/SuperLU and SuperLU_MT are integrated; modified Newton reuses its factoriz
 
 * [ ] Verify PETSc MPI integration and compare small FE runs with SuperLU_MT.
 * [ ] Validate PETSc tuning on larger frozen KKT systems.
-* [ ] Reuse SuperLU_MT symbolic analysis when KKT sparsity is unchanged (`refact=YES`).
+* [ ] Cache the SuperLU_MT column ordering (`get_perm_c`) across factorizations with an unchanged KKT pattern; the [refact study](verification/superlu_mt_results/refact_study/README.md) measured it at 0.2–1.8% of a factorization, growing with thread count.
 * [ ] Tune the SuperLU_MT blocking parameters against measured factorization time on representative systems.
 * [ ] After PETSc validation, assess a shared-memory solver path without `mpiexec`.
 
