@@ -1606,7 +1606,15 @@ postprocessing output.
 15. For Hex8, Hex8-Fbar, Hex20, and a stateful J2/F-bar update, compare serial and two-process element responses,
     assembled residual/tangent, and trial state to machine precision. Exercise more than one assembly through the same
     pool and verify that a recoverable failure leaves committed state unchanged and does not poison the pool.
-16. Verify that the SciPy path imports and runs without a built SuperLU_MT bridge. When the bridge is available, compare
+16. Patch tests on a **distorted** multi-element patch, for Hex8, Hex8-Fbar, and Hex20. Impose an exact homogeneous
+    finite deformation `u = (Fbar - I) X` on every boundary node and require, to machine precision: constant `F = Fbar`
+    at every Gauss point, constant Cauchy stress, vanishing residual at interior nodes, and agreement of the full
+    residual with its independent analytic value `f_A = P : int(grad_X N_A) dV0`. The last item is required because the
+    interior-residual identity alone holds for any *constant* stress, correct or not. The patch must be genuinely
+    distorted: on a regular lattice `J0` is diagonal and a transposed-inverse defect is undetectable in principle.
+    Include a rigid-rotation case (zero stress) and an element rank test (exactly six zero modes), since a Dirichlet
+    patch test cannot expose spurious zero-energy modes at any patch size. See `docs/PATCH_TEST_PLAN.md`.
+17. Verify that the SciPy path imports and runs without a built SuperLU_MT bridge. When the bridge is available, compare
     both direct backends on the same nonsymmetric KKT system and compare complete FE result databases with relative and
     absolute tolerances no weaker than `1e-8` unless recorded benchmark evidence justifies a different bound.
 

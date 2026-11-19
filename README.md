@@ -144,6 +144,7 @@ The suite checks material and element derivatives, independent F-bar tangent for
 | SciPy/SuperLU versus SuperLU_MT solution agreement | [Backend comparison](verification/superlu_mt_results/README.md) |
 | SuperLU_MT fork-to-upstream migration and the multithreading defect found with it | [Migration record](verification/superlu_mt_results/UPSTREAM_MIGRATION.md), [standalone reproducer](native/superlu_mt_race/README.md) |
 | Why SuperLU_MT's `refact` symbolic-reuse flag is not a solver knob | [Refactorization study](verification/superlu_mt_results/refact_study/README.md), [internals](docs/SUPERLU_MT_INTERNALS.md) |
+| Hex8/Hex8-Fbar/Hex20 patch tests on distorted meshes, and what they do not certify | [Patch-test results](verification/patch_test_results/README.md), [plan](docs/PATCH_TEST_PLAN.md), [tests](tests/test_patch.py) |
 | Heterogeneous periodic TRIP examples and average-deformation checks | [Accepted RVE results](verification/multiphase_trip_results/README.md) |
 
 This is a research solver with the element and loading scope listed above. Localized plastic-strain peaks and localization width can depend on mesh resolution. The TRIP source/library is private: archived outputs and plots are available, with large binary datasets stored through Git LFS, but repeating those solves requires the external model. Verification of that integration does not independently validate the constitutive physics. Multithreaded SuperLU_MT occasionally returns a wrong linear solve, about once per thousand factorizations at 16 threads; the Newton loop detects and recovers from it at the cost of extra iterations, and a reproducer has been prepared for the upstream maintainers (see the [running guide](docs/RUNNING.md#superlu_mt-backend)).
@@ -182,6 +183,10 @@ SciPy/SuperLU and SuperLU_MT are integrated; modified Newton reuses its factoriz
 * [x] Expose SuperLU_MT diagnostics and storage/blocking tuning through a separate TOML file.
 * [x] Measure SuperLU_MT symbolic reuse (`refact=YES`) and record why it is not exposed as a knob.
 
+**Nonlinear solver and elements**
+
+* [x] Add patch tests for Hex8, Hex20, and Hex8-Fbar on distorted meshes.
+
 </details>
 
 ### Documentation
@@ -203,7 +208,7 @@ SciPy/SuperLU and SuperLU_MT are integrated; modified Newton reuses its factoriz
 * [ ] [Extract line-search mechanics while keeping numerical decisions explicit](docs/SOLVER_CONTROL_FLOW_REFACTOR.md#line-search).
 * [ ] Review Newton/modified-Newton convergence, especially near yielding.
 * [ ] Review tangent and global-stiffness symmetry assumptions.
-* [ ] Add patch tests for Hex8, Hex20, and Hex8-Fbar.
+* [ ] Add dead surface-traction loads on reference area, verified by a stress patch test and a published 3D reference example.
 * [ ] Study cohesive-zone elements.
 * [ ] Study contact elements.
 
