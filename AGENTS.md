@@ -66,8 +66,20 @@ must never claim all of them.
 - When a measurement genuinely needs all 16 cores, do not just launch it.
   Preferred: prepare the run script, including report generation, and ask the
   user to execute it. Acceptable only if quick: confirm the cores are actually
-  idle, then run with explicit CPU pinning. A resource manager such as Slurm is
-  a long-term option and must not be assumed present.
+  idle, then run with explicit CPU pinning. Submitting through a resource
+  manager is covered in the next section; never assume one is available.
+
+### Resource manager (rmgr)
+
+- This workstation runs `rmgr` (Runwarden), a local resource queue for native
+  experiments, benchmarks, and test runs. `rmgr instructions` prints agent
+  onboarding; `rmgr resources --json` the capacity. Keep job receipts private,
+  persistent, and outside the repository.
+- Availability is not permission: confirm with the user at the start of a
+  session, or when running tests becomes the task, whether runs should go
+  through `rmgr` — the context behind that decision lives with the developer.
+- Other development machines may not have `rmgr`; fall back to direct
+  execution within the core budget above.
 - The thread-sweep scripts under `native/` (`benchmark_superlu_mt.py` and the
   race reproducer) exceed this budget by design. They are user-launched tools,
   not part of the automated suite.
