@@ -5,7 +5,7 @@
 storage at the first factorization's size and makes a later overflow an
 unrecoverable `exit(-1)`. The reasoning is in
 [../../../docs/SUPERLU_MT_INTERNALS.md](../../../docs/SUPERLU_MT_INTERNALS.md),
-section 6.
+section 7.
 
 This directory is the minimal set needed to reproduce the measurement.
 
